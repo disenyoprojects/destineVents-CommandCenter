@@ -15,7 +15,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/destinevents/destineVents-CommandCenter.git"
+    "url": "git+https://github.com/disenyoprojects/destineVents-CommandCenter.git"
   },
   "keywords": [
     "events",
@@ -27,9 +27,9 @@
   "author": "DestineVents Collective OPC",
   "license": "UNLICENSED",
   "bugs": {
-    "url": "https://github.com/destinevents/destineVents-CommandCenter/issues"
+    "url": "https://github.com/disenyoprojects/destineVents-CommandCenter/issues"
   },
-  "homepage": "https://github.com/destinevents/destineVents-CommandCenter#readme",
+  "homepage": "https://github.com/disenyoprojects/destineVents-CommandCenter#readme",
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.1.1",
