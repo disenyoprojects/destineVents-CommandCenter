@@ -12,6 +12,7 @@ export type DocActivityType =
   | 'account'
   | 'founder'
   | 'budget'
+  | 'meeting'
 
 export type DocAction =
   | 'created'

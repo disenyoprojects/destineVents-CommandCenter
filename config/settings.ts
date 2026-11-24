@@ -51,6 +51,16 @@ export const APP_SETTINGS = {
     auditLogKey: 'audit_logged',
     sidebarKey: 'sidebar_collapsed',
   },
+  // CRM meetings (handover §13.3). Edit these lists to change what the
+  // meeting form offers; stored meetings keep whatever value they were saved with.
+  meetings: {
+    types: ['Discovery', 'Sales', 'Project Consultation', 'Client Review', 'Internal'],
+    defaultTimezone: 'Asia/Manila',
+    timezones: [
+      'Asia/Manila', 'Asia/Singapore', 'Asia/Hong_Kong', 'Asia/Tokyo', 'Australia/Sydney',
+      'Asia/Dubai', 'Europe/London', 'America/New_York', 'America/Los_Angeles', 'UTC',
+    ],
+  },
   events: {
     statuses: ['Upcoming', 'Active', 'Completed', 'Cancelled'],
     types: [

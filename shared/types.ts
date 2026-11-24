@@ -540,6 +540,27 @@ export interface Meeting {
   calendar_event_link: string | null;
   google_event_id: string | null;
   recording_link: string | null;
+  // Migration 023 (handover §13.3). Optional: absent until it has been run.
+  meeting_type?: string | null;
+  timezone?: string | null;
+  location?: string | null;
+  owner_id?: string | null;
+  owner_name?: string | null;
+  contact_name?: string | null;
+  proposal_id?: number | null;
+  participants?: MeetingParticipant[] | null;
+  outcome?: string | null;
+  follow_up_actions?: string | null;
+  next_steps?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// Someone attending a meeting. Internal participants are HQ users (user_id
+// set); external ones are clients and partners, known by name and/or email.
+export interface MeetingParticipant {
+  name: string;
+  email: string | null;
+  internal: boolean;
+  user_id?: string | null;
 }
