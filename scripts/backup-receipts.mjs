@@ -21,9 +21,9 @@
 // service-role key bypasses all access rules — keep it on this computer only,
 // never commit it, never paste it anywhere else.
 import { createClient } from '@supabase/supabase-js';
-import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join } from 'node:path';
 
 const BUCKET = 'receipts';
 const PAGE = 1000;
@@ -46,7 +46,7 @@ async function listAll(sb, prefix = '') {
     for (const entry of data) {
       const path = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (entry.id === null) files.push(...await listAll(sb, path));
-      else files.push({ path, size: entry.metadata?.size ?? null });
+      else files.push({ path, size: entry.metadata?.size ?? null, mimetype: entry.metadata?.mimetype ?? null });
     }
     if (data.length < PAGE) return files;
   }
@@ -79,29 +79,36 @@ async function backup(sb) {
   if (failed.length) { console.error('Failed:', failed.join(', ')); process.exitCode = 1; }
 }
 
-async function walk(dir) {
-  const out = [];
-  for (const entry of await readdir(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...await walk(full));
-    else out.push(full);
-  }
-  return out;
+const MIME_BY_EXTENSION = { pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png' };
+
+// The type a file was stored with, or one worked out from its extension. It
+// has to be sent explicitly: from Node, a file would otherwise go up as plain
+// text, which the bucket refuses since migration 022.
+function contentTypeFor(file) {
+  const ext = file.path.split('.').pop()?.toLowerCase() ?? '';
+  return file.mimetype || MIME_BY_EXTENSION[ext] || 'application/octet-stream';
 }
 
+// Restores only what the backup's manifest lists, so nothing else that ended
+// up in the folder (.DS_Store and the like) is sent to storage.
 async function restore(sb, fromDir) {
+  const manifest = JSON.parse(await readFile(join(fromDir, 'manifest.json'), 'utf8'));
   const inStorage = new Set((await listAll(sb)).map(f => f.path));
-  const local = (await walk(fromDir))
-    .map(full => ({ full, path: relative(fromDir, full).split('\\').join('/') }))
-    .filter(f => !['manifest.json', 'finance_attachments.json'].includes(f.path));
-  const missing = local.filter(f => !inStorage.has(f.path));
-  console.info(`${missing.length} of ${local.length} backed-up file(s) are missing from storage — restoring those.`);
+  const missing = manifest.files.filter(f => !inStorage.has(f.path));
+  console.info(`${missing.length} of ${manifest.files.length} backed-up file(s) are missing from storage — restoring those.`);
 
   let restored = 0;
   for (const file of missing) {
-    const { error } = await sb.storage.from(BUCKET).upload(file.path, await readFile(file.full), { upsert: false });
-    if (error) console.error(`Could not restore ${file.path}: ${error.message}`);
-    else restored++;
+    const local = join(fromDir, file.path);
+    const data = await readFile(local).catch(() => null);
+    if (!data) { console.error(`Not in this backup folder: ${file.path}`); continue; }
+    const contentType = contentTypeFor(file);
+    const { error } = await sb.storage.from(BUCKET).upload(file.path, data, { upsert: false, contentType });
+    if (!error) { restored++; continue; }
+    const refusedType = /mime|type/i.test(error.message);
+    console.error(refusedType
+      ? `Could not restore ${file.path}: the bucket no longer accepts ${contentType} files (only PDF, JPG, PNG). Keep it from the backup folder by hand.`
+      : `Could not restore ${file.path}: ${error.message}`);
   }
   console.info(`Done: ${restored} restored. Now run database/ops/check-receipt-files.sql.`);
   if (restored < missing.length) process.exitCode = 1;

@@ -31,18 +31,21 @@ export function attachmentRowsHTML(
   if (!items.length) {
     return '<div style="font-size:11px;color:var(--ink-3)">No receipts attached yet.</div>';
   }
-  return items.map((a, i) => `
+  return items.map(a => {
+    const key = a.id ?? 0;
+    return `
     <div style="display:flex;align-items:flex-start;gap:10px;padding:6px 0;border-bottom:1px solid var(--ink-4)">
       <div style="flex:1;min-width:0">
         <div style="font-size:12px;color:var(--ink);overflow-wrap:anywhere">&#128206; ${escapeHtml(a.file_name)}</div>
         <div style="font-size:10.5px;color:var(--ink-3)">${uploadedLine(a)}</div>
       </div>
       <div style="display:flex;gap:10px;font-size:11px;white-space:nowrap">
-        <button type="button" style="${linkBtn};color:var(--blue)" onclick="viewRecordAttachment('${type}',${id},${i})">View</button>
-        <button type="button" style="${linkBtn};color:var(--blue)" onclick="downloadRecordAttachment('${type}',${id},${i})">Download</button>
-        ${canRemove && !a.legacy ? `<button type="button" style="${linkBtn};color:var(--red)" onclick="removeRecordAttachment('${type}',${id},${i})">Remove</button>` : ''}
+        <button type="button" style="${linkBtn};color:var(--blue)" onclick="viewRecordAttachment('${type}',${id},${key})">View</button>
+        <button type="button" style="${linkBtn};color:var(--blue)" onclick="downloadRecordAttachment('${type}',${id},${key})">Download</button>
+        ${canRemove && !a.legacy ? `<button type="button" style="${linkBtn};color:var(--red)" onclick="removeRecordAttachment('${type}',${id},${key})">Remove</button>` : ''}
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 // The picker every form uses. `multiple`, and the same type list the bucket

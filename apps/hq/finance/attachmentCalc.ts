@@ -16,6 +16,9 @@ export const MAX_RECEIPT_BYTES = 5 * 1024 * 1024;
 const ALLOWED_EXTENSIONS = ['pdf', 'jpg', 'jpeg', 'png'];
 const ALLOWED_MIME_TYPES = ['application/pdf', 'image/jpeg', 'image/png'];
 export const RECEIPT_ACCEPT = '.pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png';
+const MIME_BY_EXTENSION: Record<string, string> = {
+  pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+};
 
 // A file as listed for a record: a stored row, or (id null) the old column.
 export interface ListedAttachment {
@@ -41,6 +44,13 @@ export function validateReceiptFile(file: { name: string; size: number; type: st
   if (file.size <= 0) return `${file.name} is empty`;
   if (file.size > MAX_RECEIPT_BYTES) return `${file.name} is over 5 MB`;
   return null;
+}
+
+// The type to upload a file as. The bucket refuses anything off its list, and
+// some browsers report no type at all for a perfectly good PDF — so the
+// extension decides when the browser does not.
+export function receiptMimeType(file: { name: string; type: string }): string | null {
+  return file.type || MIME_BY_EXTENSION[extensionOf(file.name)] || null;
 }
 
 // Where a new file goes inside the receipts bucket. The name is random so two

@@ -51,13 +51,22 @@ drop policy if exists "finance_attachments_read"  on finance_attachments;
 drop policy if exists "finance_attachments_write" on finance_attachments;
 drop policy if exists "finance_attachments_edit"  on finance_attachments;
 
+-- A receipt on an expense is only listed to someone who can see that expense
+-- (bills are admin-only today), so the attachment never reaches further than
+-- the record it belongs to. Ledger receipts follow the ledger's own tiers.
 create policy "finance_attachments_read" on finance_attachments
   for select to authenticated
-  using (public.current_user_role() in ('admin', 'finance_officer', 'supervisor', 'external_accountant'));
+  using (
+    public.current_user_role() in ('admin', 'finance_officer', 'supervisor', 'external_accountant')
+    and (record_type <> 'bill' or exists (select 1 from bills b where b.id = record_id))
+  );
 
 create policy "finance_attachments_write" on finance_attachments
   for insert to authenticated
-  with check (public.current_user_role() in ('admin', 'finance_officer'));
+  with check (
+    public.current_user_role() in ('admin', 'finance_officer')
+    and (record_type <> 'bill' or exists (select 1 from bills b where b.id = record_id))
+  );
 
 create policy "finance_attachments_edit" on finance_attachments
   for update to authenticated
@@ -66,8 +75,31 @@ create policy "finance_attachments_edit" on finance_attachments
 
 -- ── 2. Copy existing receipts in ─────────────────────────────────────────────
 -- The path is what follows "/object/<sign|public|authenticated>/receipts/" in
--- an old URL, or the value itself when it is already a path — the same rule as
--- storagePathFromAttachment in apps/hq/finance/receiptAttachment.ts.
+-- an old URL, percent-decoded ("My%20scan" → "My scan"), or the value itself
+-- when it is already a path — the same rule as storagePathFromAttachment in
+-- apps/hq/finance/receiptAttachment.ts, so both find the same file.
+create or replace function pg_temp.url_decode(input text) returns text
+language plpgsql immutable as $$
+declare
+  bytes bytea := '';
+  i     int   := 1;
+begin
+  if input is null then return null; end if;
+  while i <= length(input) loop
+    if substr(input, i, 1) = '%' and substr(input, i + 1, 2) ~ '^[0-9A-Fa-f]{2}$' then
+      bytes := bytes || decode(substr(input, i + 1, 2), 'hex');
+      i := i + 3;
+    else
+      bytes := bytes || convert_to(substr(input, i, 1), 'UTF8');
+      i := i + 1;
+    end if;
+  end loop;
+  return convert_from(bytes, 'UTF8');
+exception when others then
+  return input;  -- not valid UTF-8 once decoded: keep it as written
+end;
+$$;
+
 with legacy as (
   select 'bill'::text as record_type, id as record_id, receipt_url as ref
     from bills
@@ -79,8 +111,8 @@ with legacy as (
 ), paths as (
   select record_type, record_id,
          ltrim(coalesce(
-           substring(ref from '/object/(?:sign|public|authenticated)/receipts/([^?]+)'),
-           ref
+           pg_temp.url_decode(substring(btrim(ref) from '/object/(?:sign|public|authenticated)/receipts/([^?]+)')),
+           btrim(ref)
          ), '/') as storage_path
     from legacy
 )
@@ -93,12 +125,12 @@ select p.record_type,
        regexp_replace(p.storage_path, '^.*/', ''),
        o.metadata ->> 'mimetype',
        nullif(o.metadata ->> 'size', '')::bigint,
-       o.owner,
+       coalesce(o.owner, nullif(o.owner_id, '')::uuid),
        u.name,
        o.created_at
   from paths p
   left join storage.objects o on o.bucket_id = 'receipts' and o.name = p.storage_path
-  left join intern_users u    on u.id = o.owner
+  left join intern_users u    on u.id = coalesce(o.owner, nullif(o.owner_id, '')::uuid)
  where p.storage_path !~ '^https?://'
 on conflict (record_type, record_id, storage_path) do nothing;
 
@@ -130,8 +162,10 @@ create policy "finance_receipts_delete" on storage.objects
   for delete to authenticated
   using (bucket_id = 'receipts' and public.current_user_role() = 'admin');
 
--- ── Check (read-only) — read this after running ──────────────────────────────
--- Every existing receipt should now have a row. Expect both counts to match.
+-- ── Check (read-only) — read this right after running ────────────────────────
+-- Every existing receipt should now have a row: expect each pair of counts to
+-- match. (Once new receipts are being uploaded, use
+-- database/ops/check-receipt-files.sql instead — it checks record by record.)
 select 'expenses with a receipt' as what, count(*) from bills where coalesce(receipt_url, '') <> ''
 union all
 select 'expense receipts copied', count(distinct record_id) from finance_attachments where record_type = 'bill'

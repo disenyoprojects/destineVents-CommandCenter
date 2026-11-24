@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { FinanceAttachment } from '@shared/types.ts';
 import {
-  validateReceiptFile, receiptObjectPath, attachmentsFor, formatFileSize,
+  validateReceiptFile, receiptObjectPath, attachmentsFor, formatFileSize, receiptMimeType,
 } from './attachmentCalc.ts';
 
 const MB = 1024 * 1024;
@@ -33,6 +33,17 @@ describe('validateReceiptFile', () => {
   });
   it('accepts a right extension when the browser reports no type', () => {
     expect(validateReceiptFile({ name: 'r.pdf', size: MB, type: '' })).toBeNull();
+  });
+});
+
+describe('receiptMimeType', () => {
+  it('keeps what the browser reports', () => {
+    expect(receiptMimeType({ name: 'r.pdf', type: 'application/pdf' })).toBe('application/pdf');
+  });
+  it('works it out from the extension when the browser reports nothing', () => {
+    expect(receiptMimeType({ name: 'R.PDF', type: '' })).toBe('application/pdf');
+    expect(receiptMimeType({ name: 'r.jpeg', type: '' })).toBe('image/jpeg');
+    expect(receiptMimeType({ name: 'r.png', type: '' })).toBe('image/png');
   });
 });
 

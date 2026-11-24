@@ -5,14 +5,15 @@
 import { sb } from '@shared/core/supabase.ts';
 import { getCurrentUser } from '@shared/core/authService.ts';
 import { logDocActivity } from '@shared/services/documents/activityLogService.ts';
-import { _attachments, _bills, _ledger, setAttachments } from '@hq/core/state.ts';
+import { _attachments, _bills, _ledger } from '@hq/core/state.ts';
 import { toast, openModal, closeModal } from '@hq/core/ui.ts';
 import { RECEIPTS_BUCKET, signAttachment } from './receiptAttachment.ts';
 import {
-  attachmentsFor, receiptObjectPath, validateReceiptFile,
+  attachmentsFor, receiptMimeType, receiptObjectPath, validateReceiptFile,
   type AttachmentRecordType, type ListedAttachment,
 } from './attachmentCalc.ts';
-import { fetchAttachments, insertAttachment, markAttachmentRemoved } from './attachmentService.ts';
+import type { FinanceAttachment } from '@shared/types.ts';
+import { insertAttachment, markAttachmentRemoved } from './attachmentService.ts';
 import { updateBill } from './financeService.ts';
 import { updateLedgerEntry } from './ledgerService.ts';
 import { canManageFinance } from './financePermissions.ts';
@@ -35,8 +36,33 @@ function recordLabel(type: AttachmentRecordType, id: number): string | null {
     : _ledger.find(e => e.id === id)?.reference_no ?? null;
 }
 
+// Rows grouped by record, rebuilt only when the list itself is replaced — the
+// ledger draws a paperclip per row, and filtering every file for every row
+// slows the table down as both grow.
+let _indexedFrom: FinanceAttachment[] | null = null;
+let _byRecord = new Map<string, FinanceAttachment[]>();
+
+function rowsFor(type: AttachmentRecordType, id: number): FinanceAttachment[] {
+  if (_indexedFrom !== _attachments) {
+    _byRecord = new Map();
+    for (const row of _attachments) {
+      const key = `${row.record_type}:${row.record_id}`;
+      _byRecord.set(key, [...(_byRecord.get(key) ?? []), row]);
+    }
+    _indexedFrom = _attachments;
+  }
+  return _byRecord.get(`${type}:${id}`) ?? [];
+}
+
 export function recordAttachments(type: AttachmentRecordType, id: number): ListedAttachment[] {
-  return attachmentsFor(type, id, _attachments, legacyRef(type, id));
+  return attachmentsFor(type, id, rowsFor(type, id), legacyRef(type, id));
+}
+
+// Buttons name a file by its row id (0 for the copy still held only in the
+// record's own column), not by its place in the list — the list can be
+// reloaded between drawing it and the click.
+function findAttachment(type: AttachmentRecordType, id: number, key: number): ListedAttachment | undefined {
+  return recordAttachments(type, id).find(a => (key === 0 ? a.legacy : a.id === key));
 }
 
 export function pickedFiles(inputId: string): File[] {
@@ -51,9 +77,8 @@ export function checkPickedFiles(files: File[]): string | null {
 }
 
 // Before migration 022 there is no attachments table; the record's own
-// single-file column is all there is, and only an empty one may be filled.
+// single-file column is all there is.
 async function saveToOldColumn(type: AttachmentRecordType, id: number, path: string): Promise<boolean> {
-  if (legacyRef(type, id)) return false;
   return type === 'bill'
     ? updateBill(id, { receipt_url: path })
     : updateLedgerEntry(id, { attachment_url: path });
@@ -68,16 +93,27 @@ export async function uploadRecordFiles(
 ): Promise<{ saved: number; problems: string[] }> {
   const problems: string[] = [];
   let saved = 0;
+  // Tracked here rather than read from the loaded record: a new record is not
+  // loaded yet, and each fallback save fills the column for the next file.
+  let oldColumnFree = !legacyRef(type, id);
+  let tableMissing = false;
   const user  = await getCurrentUser();
   const actor = user?.name ?? user?.email ?? null;
 
   for (const file of files) {
     const invalid = validateReceiptFile(file);
     if (invalid) { problems.push(invalid); continue; }
+    if (tableMissing && !oldColumnFree) {
+      problems.push(`${file.name} was not uploaded — only one receipt per record is possible until database migration 022 is run`);
+      continue;
+    }
 
+    // In the browser the upload's type comes from the File itself, so a file
+    // the browser reported no type for is re-wrapped with one the bucket takes.
+    const mime = receiptMimeType(file);
+    const body = file.type || !mime ? file : new File([file], file.name, { type: mime });
     const path = receiptObjectPath(FOLDER[type], file.name, crypto.randomUUID());
-    const { error } = await sb.storage.from(RECEIPTS_BUCKET)
-      .upload(path, file, { upsert: false, contentType: file.type || undefined });
+    const { error } = await sb.storage.from(RECEIPTS_BUCKET).upload(path, body, { upsert: false });
     if (error) {
       console.error('receipt upload failed:', error);
       problems.push(`${file.name} could not be uploaded`);
@@ -86,12 +122,13 @@ export async function uploadRecordFiles(
 
     const row = await insertAttachment({
       record_type: type, record_id: id, storage_path: path,
-      file_name: file.name, mime_type: file.type || null, size_bytes: file.size,
+      file_name: file.name, mime_type: mime, size_bytes: file.size,
       uploaded_by: user?.id ?? null, uploaded_by_name: actor,
       uploaded_at: new Date().toISOString(),
     });
     if (row === 'missing-table') {
-      if (await saveToOldColumn(type, id, path)) { saved++; continue; }
+      tableMissing = true;
+      if (oldColumnFree && await saveToOldColumn(type, id, path)) { oldColumnFree = false; saved++; continue; }
       problems.push(`${file.name} was uploaded, but only one receipt per record is possible until database migration 022 is run`);
       continue;
     }
@@ -111,8 +148,10 @@ export function reportUpload(result: { saved: number; problems: string[] }): voi
   }
 }
 
+// Reloads Finance so the table's paperclip counts move too, then redraws the
+// list in whichever form or window is open.
 async function refreshAttachments(type: AttachmentRecordType, id: number): Promise<void> {
-  setAttachments(await fetchAttachments());
+  await loadFinance();
   const list = document.getElementById(attachmentListId(type, id));
   if (list) list.innerHTML = attachmentRowsHTML(type, id, recordAttachments(type, id), canManageFinance());
 }
@@ -138,19 +177,19 @@ async function openSigned(stored: string, downloadAs?: string): Promise<void> {
   }
 }
 
-export function viewRecordAttachment(type: AttachmentRecordType, id: number, index: number) {
-  const a = recordAttachments(type, id)[index];
+export function viewRecordAttachment(type: AttachmentRecordType, id: number, key: number) {
+  const a = findAttachment(type, id, key);
   if (a) void openSigned(a.storage_path);
 }
 
-export function downloadRecordAttachment(type: AttachmentRecordType, id: number, index: number) {
-  const a = recordAttachments(type, id)[index];
+export function downloadRecordAttachment(type: AttachmentRecordType, id: number, key: number) {
+  const a = findAttachment(type, id, key);
   if (a) void openSigned(a.storage_path, a.file_name);
 }
 
-export async function removeRecordAttachment(type: AttachmentRecordType, id: number, index: number) {
+export async function removeRecordAttachment(type: AttachmentRecordType, id: number, key: number) {
   if (!canManageFinance()) { toast('You do not have permission to change finance records', 'error'); return; }
-  const a = recordAttachments(type, id)[index];
+  const a = findAttachment(type, id, key);
   if (!a?.id) return;
   if (!confirm(`Remove ${a.file_name} from this record? The original file is kept in storage.`)) return;
   const user  = await getCurrentUser();
