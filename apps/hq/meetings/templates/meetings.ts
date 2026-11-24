@@ -1,5 +1,6 @@
 import type { Meeting, Client } from '@shared/types';
 import { escapeHtml } from '@shared/utils/helpers.ts';
+import { localDateTimeInput } from '@shared/utils/dateUtils.ts';
 
 export const MEETING_STAGES = ['Discovery', 'Strategy & Proposal', 'Kickoff'] as const;
 export const MEETING_STATUSES = ['Not Scheduled', 'Scheduled', 'Completed', 'Cancelled', 'No Show'] as const;
@@ -113,11 +114,6 @@ export function meetingFormHTML(m: Partial<Meeting> = {}, clients: Client[]): st
     `<option${m.status === s ? ' selected' : ''}>${escapeHtml(s)}</option>`
   ).join('');
 
-  const toDatetimeLocal = (dt: string | null | undefined): string => {
-    if (!dt) return '';
-    return new Date(dt).toISOString().slice(0, 16);
-  };
-
   return `
   <div class="form-grid">
     <div class="form-group">
@@ -147,12 +143,12 @@ export function meetingFormHTML(m: Partial<Meeting> = {}, clients: Client[]): st
     <div class="form-group">
       <div class="form-label">Start Date & Time</div>
       <input class="form-input" id="mt-start" type="datetime-local"
-        value="${toDatetimeLocal(m.start_datetime)}"/>
+        value="${localDateTimeInput(m.start_datetime)}"/>
     </div>
     <div class="form-group">
       <div class="form-label">End Date & Time</div>
       <input class="form-input" id="mt-end" type="datetime-local"
-        value="${toDatetimeLocal(m.end_datetime)}"/>
+        value="${localDateTimeInput(m.end_datetime)}"/>
     </div>
     <div class="form-group">
       <div class="form-label">Google Meet Link</div>

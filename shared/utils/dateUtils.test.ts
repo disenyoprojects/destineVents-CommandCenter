@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { formatDate, formatDateShort, todayISO, getQuarter } from './dateUtils.ts';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { formatDate, formatDateShort, todayISO, getQuarter, localDateTimeInput } from './dateUtils.ts';
 
 describe('formatDate', () => {
   it('returns em dash for null', () => {
@@ -45,5 +45,28 @@ describe('getQuarter', () => {
   });
   it('returns Q4 for December', () => {
     expect(getQuarter(new Date('2026-12-01'))).toBe('Q4 2026');
+  });
+});
+
+describe('localDateTimeInput', () => {
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  it('shows a stored UTC time in Manila time, not UTC', () => {
+    vi.stubEnv('TZ', 'Asia/Manila');
+    expect(localDateTimeInput('2026-11-24T02:30:00Z')).toBe('2026-11-24T10:30');
+  });
+  it('rolls over to the next day when Manila is already past midnight', () => {
+    vi.stubEnv('TZ', 'Asia/Manila');
+    expect(localDateTimeInput('2026-11-24T17:15:00Z')).toBe('2026-11-25T01:15');
+  });
+  it('round-trips through the form unchanged, so saving without edits keeps the time', () => {
+    vi.stubEnv('TZ', 'Asia/Manila');
+    const stored = '2026-11-24T02:30:00.000Z';
+    expect(new Date(localDateTimeInput(stored)).toISOString()).toBe(stored);
+  });
+  it('returns empty for missing or unreadable values', () => {
+    expect(localDateTimeInput(null)).toBe('');
+    expect(localDateTimeInput(undefined)).toBe('');
+    expect(localDateTimeInput('not a date')).toBe('');
   });
 });

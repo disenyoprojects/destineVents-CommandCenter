@@ -29,6 +29,19 @@ export function localISODate(date: Date = new Date()): string {
   return `${y}-${m}-${d}`;
 }
 
+// A stored timestamp as a <input type="datetime-local"> value, in the user's
+// own timezone. The input has no timezone of its own: whatever it shows is read
+// back as local time on save. Filling it from toISOString() (UTC) meant every
+// edit of a meeting in Manila moved it 8 hours earlier.
+export function localDateTimeInput(isoVal: string | null | undefined): string {
+  if (!isoVal) return '';
+  const date = new Date(isoVal);
+  if (Number.isNaN(date.getTime())) return '';
+  const h = String(date.getHours()).padStart(2, '0');
+  const min = String(date.getMinutes()).padStart(2, '0');
+  return `${localISODate(date)}T${h}:${min}`;
+}
+
 export function todayISO(): string {
   return localISODate();
 }

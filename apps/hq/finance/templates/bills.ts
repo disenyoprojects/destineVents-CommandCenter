@@ -115,7 +115,7 @@ export function billFormHTML(
     <div class="form-group full">
       <div class="form-label">Receipt Attachment</div>
       <input class="form-input" id="fb-receipt-file" type="file" accept="image/*,.pdf" style="padding:6px"/>
-      ${b.receipt_url ? `<div style="margin-top:6px;font-size:11px;color:var(--ink-3)">Current: <a href="${escapeHtml(b.receipt_url)}" target="_blank" rel="noopener noreferrer" style="color:var(--blue)">View attached receipt</a> · Upload a new file to replace it.</div>` : '<div style="margin-top:4px;font-size:11px;color:var(--ink-3)">JPG, PNG or PDF — max 5 MB</div>'}
+      ${b.receipt_url && b.id ? `<div style="margin-top:6px;font-size:11px;color:var(--ink-3)">Current: <button type="button" onclick="openBillReceipt(${b.id})" style="background:none;border:none;padding:0;cursor:pointer;color:var(--blue);font:inherit;text-decoration:underline">View attached receipt</button> · Upload a new file to replace it.</div>` : '<div style="margin-top:4px;font-size:11px;color:var(--ink-3)">JPG, PNG or PDF — max 5 MB</div>'}
     </div>
     <div class="form-group full"><div class="form-label">Remarks</div><textarea class="form-input" id="fb-remarks" rows="2" placeholder="Notes or additional details">${escapeHtml(b.remarks ?? '')}</textarea></div>
     ${isEdit ? `<div class="form-group"><div class="form-label">Status</div><select class="form-input" id="fb-status">${statusOpts}</select></div>` : ''}
