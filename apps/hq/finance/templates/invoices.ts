@@ -1,5 +1,5 @@
 import type { Invoice, InvoiceLineItem, Client, Project, SOB } from '@shared/types.ts';
-import { escapeHtml, statusClass } from '@shared/utils/helpers.ts';
+import { escapeHtml, statusClass, jsArg } from '@shared/utils/helpers.ts';
 import { formatCurrency } from '@shared/utils/formatUtils.ts';
 import { formatDateShort, todayISO } from '@shared/utils/dateUtils.ts';
 import { invoiceDisplayStatus } from '../arCalc.ts';
@@ -80,7 +80,7 @@ export function invoiceRowHTML(i: Invoice, sobs: SOB[], bpiEnabled: boolean): st
         `<button onclick="printInvoice(${i.id})">Print Invoice</button>`,
         `<button onclick="openDuplicateInvoice(${i.id})">Duplicate</button>`,
         `<button onclick="openEditInvoice(${i.id})">Edit</button>`,
-        `<button onclick="openDocActivityLog('invoice',${i.id},'${escapeHtml(i.or_num)}')">Activity Log</button>`,
+        `<button onclick="openDocActivityLog('invoice',${i.id},${jsArg(i.or_num)})">Activity Log</button>`,
         `<div class="action-menu-sep"></div>`,
         `<button onclick="archiveInvoice(${i.id})">Archive</button>`,
         `<button class="menu-danger" onclick="handleDeleteInvoice(${i.id})">Delete</button>`,

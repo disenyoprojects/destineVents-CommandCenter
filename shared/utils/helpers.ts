@@ -12,6 +12,16 @@ export function escapeHtml(str: unknown): string {
     .replace(/'/g, '&#39;');
 }
 
+// A value as a quoted JavaScript string, safe inside an onclick="…" attribute:
+// onclick="openDocActivityLog('sob',3,${jsArg(num)})". JSON.stringify handles
+// quotes, backslashes and newlines; escapeHtml then protects the attribute.
+// Wrapping escapeHtml(value) in '…' by hand is not enough — the browser turns
+// &#39; back into ' before running the handler, so a ' in the value ends the
+// string early and the button stops working.
+export function jsArg(value: unknown): string {
+  return escapeHtml(JSON.stringify(String(value ?? '')));
+}
+
 export function badge(val: string): string {
   return `<span class="badge badge-${val}">${STATUS_LABELS[val] || val}</span>`;
 }

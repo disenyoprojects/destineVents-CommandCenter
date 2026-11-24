@@ -1,5 +1,5 @@
 import { formatCurrency } from '@shared/utils/formatUtils.ts';
-import { escapeHtml } from '@shared/utils/helpers.ts';
+import { escapeHtml, jsArg } from '@shared/utils/helpers.ts';
 import { validateRequired } from '@shared/utils/validators.ts';
 import { APP_SETTINGS } from '@config/settings.ts';
 
@@ -127,7 +127,7 @@ function _contractRowHTML(c: Contract): string {
   const statusCls = CON_STATUS_CLASS[c.status] ?? 'draft';
 
   let actions = '';
-  const activityBtn = `<button class="btn btn-ghost" style="padding:3px 8px;font-size:11px;color:var(--ink-3)" onclick="openDocActivityLog('contract',${c.id},'${escapeHtml(c.con_number)}')">Activity</button>`;
+  const activityBtn = `<button class="btn btn-ghost" style="padding:3px 8px;font-size:11px;color:var(--ink-3)" onclick="openDocActivityLog('contract',${c.id},${jsArg(c.con_number)})">Activity</button>`;
   if (c.status === 'Draft') {
     actions = `
       <button class="btn btn-ghost" style="padding:3px 8px;font-size:11px" onclick="openEditContract(${c.id})">Edit</button>

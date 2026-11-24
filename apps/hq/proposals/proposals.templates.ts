@@ -1,5 +1,5 @@
 import type { Client, Project, Proposal, ProposalLineItem, ProposalStats } from '@shared/types.ts';
-import { escapeHtml, statusClass } from '@shared/utils/helpers.ts';
+import { escapeHtml, statusClass, jsArg } from '@shared/utils/helpers.ts';
 import { formatCurrency } from '@shared/utils/formatUtils.ts';
 import { formatDateShort } from '@shared/utils/dateUtils.ts';
 import { statusOptions, canTransition } from '@shared/documents/docTransitions.ts';
@@ -38,7 +38,6 @@ function proposalPrimaryAction(p: Proposal, projects: Project[]): string {
 
 export function proposalRowHTML(p: Proposal, projects: Project[] = []): string {
   const displayValue = proposalValue(p);
-  const quoRef = escapeHtml(p.quo_number ?? String(p.id));
   return `
     <tr>
       <td style="font-size:11px;color:var(--ink-3)">${escapeHtml(p.quo_number ?? '—')}</td>
@@ -54,7 +53,7 @@ export function proposalRowHTML(p: Proposal, projects: Project[] = []): string {
             <button role="menuitem" onclick="printQuotation(${p.id})">PDF</button>
             <button role="menuitem" onclick="sendQuotationEmail(${p.id})">Email</button>
             <button role="menuitem" onclick="openEditProposal(${p.id})">Edit</button>
-            <button role="menuitem" onclick="openDocActivityLog('quotation',${p.id},'${quoRef}')">Activity Log</button>
+            <button role="menuitem" onclick="openDocActivityLog('quotation',${p.id},${jsArg(p.quo_number ?? String(p.id))})">Activity Log</button>
             <div class="action-menu-sep"></div>
             <button role="menuitem" class="menu-danger" onclick="handleDeleteProposal(${p.id})">Delete</button>`,
             `Actions for ${p.quo_number ?? p.name}`)}

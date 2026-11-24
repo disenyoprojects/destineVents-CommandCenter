@@ -1,5 +1,5 @@
 import type { Meeting, Client, InternUser, Proposal } from '@shared/types';
-import { escapeHtml } from '@shared/utils/helpers.ts';
+import { escapeHtml, jsArg } from '@shared/utils/helpers.ts';
 import { APP_SETTINGS } from '@config/settings.ts';
 import {
   meetingStats, utcToZonedWallTime, formatExternalParticipants, isValidTimezone,
@@ -75,9 +75,7 @@ function meetLinkHTML(m: Meeting): string {
 function actionButtons(m: Meeting): string {
   const editBtn = `<button role="menuitem" onclick="openEditMeeting(${m.id})">Edit</button>`;
   const delBtn  = `<button role="menuitem" style="color:var(--red)" onclick="handleDeleteMeeting(${m.id})">Delete</button>`;
-  // JSON.stringify makes the title a safe JS string (quotes, backslashes,
-  // newlines); escapeHtml then makes that safe inside the attribute.
-  const logBtn  = `<button role="menuitem" onclick="openDocActivityLog('meeting',${m.id},${escapeHtml(JSON.stringify(m.title ?? 'Meeting'))})">Activity Log</button>`;
+  const logBtn  = `<button role="menuitem" onclick="openDocActivityLog('meeting',${m.id},${jsArg(m.title ?? 'Meeting')})">Activity Log</button>`;
 
   let statusActions = '';
   if (m.status === 'Not Scheduled') {

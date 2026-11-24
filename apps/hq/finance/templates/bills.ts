@@ -1,5 +1,5 @@
 import type { Bill, Project } from '@shared/types.ts';
-import { escapeHtml } from '@shared/utils/helpers.ts';
+import { escapeHtml, jsArg } from '@shared/utils/helpers.ts';
 import { formatCurrency } from '@shared/utils/formatUtils.ts';
 import { formatDateShort } from '@shared/utils/dateUtils.ts';
 import { _userRole } from '../../core/state.ts';
@@ -39,7 +39,7 @@ export function apRowHTML(b: Bill, projects: Project[], paperclip = ''): string 
   const projName  = proj ? escapeHtml(proj.name) : '—';
   const statusCls = AP_STATUS_CLASS[b.status] ?? 'pending';
 
-  const activityBtn = `<button class="btn btn-ghost" style="padding:3px 8px;font-size:11px;color:var(--ink-3)" onclick="openDocActivityLog('bill',${b.id},'${escapeHtml(b.expense_number ?? String(b.id))}')">Activity</button>`;
+  const activityBtn = `<button class="btn btn-ghost" style="padding:3px 8px;font-size:11px;color:var(--ink-3)" onclick="openDocActivityLog('bill',${b.id},${jsArg(b.expense_number ?? String(b.id))})">Activity</button>`;
   let actions = '';
   if (b.status === 'Pending') {
     actions = isApprover()

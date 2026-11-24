@@ -1,6 +1,6 @@
 import { formatCurrency } from '@shared/utils/formatUtils.ts';
 import { formatDateShort, todayISO } from '@shared/utils/dateUtils.ts';
-import { escapeHtml } from '@shared/utils/helpers.ts';
+import { escapeHtml, jsArg } from '@shared/utils/helpers.ts';
 import { validateRequired } from '@shared/utils/validators.ts';
 import { isFilledLineItem, itemsMissingDescription } from '@shared/documents/lineItems.ts';
 import { APP_SETTINGS } from '@config/settings.ts';
@@ -210,7 +210,7 @@ export function renderSOB(sobs: SOB[]) {
           `<button onclick="printSOB(${s.id})">Download PDF</button>`,
           `<button onclick="openEditSOB(${s.id})">Edit</button>`,
           `<button onclick="openDuplicateSOB(${s.id})">Duplicate</button>`,
-          `<button onclick="openDocActivityLog('sob',${s.id},'${escapeHtml(s.sob_num)}')">Activity Log</button>`,
+          `<button onclick="openDocActivityLog('sob',${s.id},${jsArg(s.sob_num)})">Activity Log</button>`,
           `<div class="action-menu-sep"></div>`,
           `<button onclick="archiveSOB(${s.id})">Archive</button>`,
           `<button class="menu-danger" onclick="handleDeleteSOB(${s.id})">Delete</button>`,

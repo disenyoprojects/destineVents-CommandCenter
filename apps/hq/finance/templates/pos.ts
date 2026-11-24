@@ -1,5 +1,5 @@
 import type { PurchaseOrder, POLineItem, Project } from '@shared/types.ts';
-import { escapeHtml } from '@shared/utils/helpers.ts';
+import { escapeHtml, jsArg } from '@shared/utils/helpers.ts';
 import { formatCurrency } from '@shared/utils/formatUtils.ts';
 import { formatDateShort } from '@shared/utils/dateUtils.ts';
 
@@ -17,7 +17,7 @@ export function poRowHTML(po: PurchaseOrder, projects: Project[]): string {
   const projName = proj ? escapeHtml(proj.name) : '—';
   const statusCls = PO_STATUS_CLASS[po.status] ?? 'draft';
 
-  const activityBtn = `<button class="btn btn-ghost" style="padding:3px 8px;font-size:11px;color:var(--ink-3)" onclick="openDocActivityLog('po',${po.id},'${escapeHtml(po.po_number)}')">Activity</button>`;
+  const activityBtn = `<button class="btn btn-ghost" style="padding:3px 8px;font-size:11px;color:var(--ink-3)" onclick="openDocActivityLog('po',${po.id},${jsArg(po.po_number)})">Activity</button>`;
   let actions = '';
   if (po.status === 'Draft') {
     actions = `
