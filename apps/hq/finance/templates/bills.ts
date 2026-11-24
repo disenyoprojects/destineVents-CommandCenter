@@ -31,7 +31,9 @@ export const AP_STATUS_CLASS: Record<string, string> = {
 
 // ── Bill row ──────────────────────────────────────────────────────────────────
 
-export function apRowHTML(b: Bill, projects: Project[]): string {
+// `paperclip` is the row's receipt button, built by attachments.ts (it needs
+// the attachment list, which this template does not see).
+export function apRowHTML(b: Bill, projects: Project[], paperclip = ''): string {
   const vendor    = escapeHtml(b.vendor ?? b.payee ?? '—');
   const proj      = projects.find(p => p.id === b.project_id);
   const projName  = proj ? escapeHtml(proj.name) : '—';
@@ -76,7 +78,7 @@ export function apRowHTML(b: Bill, projects: Project[]): string {
 
   return `<tr>
     <td style="font-size:11px;color:var(--ink-3)">${escapeHtml(b.expense_number ?? '—')}</td>
-    <td style="font-weight:500;color:var(--ink)">${vendor}${b.receipt_url ? ` <button type="button" title="View receipt" aria-label="View receipt" onclick="openBillReceipt(${b.id})" style="background:none;border:none;padding:0;cursor:pointer;color:var(--green);font-size:10px">&#128206;</button>` : ''}</td>
+    <td style="font-weight:500;color:var(--ink)">${vendor}${paperclip}</td>
     <td style="font-size:11px;color:var(--ink-3)">${escapeHtml(b.category ?? '—')}</td>
     <td style="font-size:11px;color:var(--ink-3)">${projName}</td>
     <td style="font-size:11px;color:var(--ink-3)">${displayDate(b.date)}</td>
@@ -94,6 +96,7 @@ export function billFormHTML(
   isEdit: boolean,
   projects: Project[],
   ewtRates: string[],
+  receiptsHTML = '',
 ): string {
   const catOpts  = AP_CATEGORIES.map(c => `<option${c === b.category ? ' selected' : ''}>${escapeHtml(c)}</option>`).join('');
   const ewtOpts  = ewtRates.map(e => `<option${e === (b.ewt ?? '0%') ? ' selected' : ''}>${e}</option>`).join('');
@@ -113,9 +116,8 @@ export function billFormHTML(
     <div class="form-group"><div class="form-label">Amount (₱) *</div><input class="form-input" id="fb-amount" type="number" min="0" step="0.01" value="${b.amount ?? 0}"/></div>
     <div class="form-group"><div class="form-label">EWT Rate</div><select class="form-input" id="fb-ewt">${ewtOpts}</select></div>
     <div class="form-group full">
-      <div class="form-label">Receipt Attachment</div>
-      <input class="form-input" id="fb-receipt-file" type="file" accept="image/*,.pdf" style="padding:6px"/>
-      ${b.receipt_url && b.id ? `<div style="margin-top:6px;font-size:11px;color:var(--ink-3)">Current: <button type="button" onclick="openBillReceipt(${b.id})" style="background:none;border:none;padding:0;cursor:pointer;color:var(--blue);font:inherit;text-decoration:underline">View attached receipt</button> · Upload a new file to replace it.</div>` : '<div style="margin-top:4px;font-size:11px;color:var(--ink-3)">JPG, PNG or PDF — max 5 MB</div>'}
+      <div class="form-label">Receipts</div>
+      ${receiptsHTML}
     </div>
     <div class="form-group full"><div class="form-label">Remarks</div><textarea class="form-input" id="fb-remarks" rows="2" placeholder="Notes or additional details">${escapeHtml(b.remarks ?? '')}</textarea></div>
     ${isEdit ? `<div class="form-group"><div class="form-label">Status</div><select class="form-input" id="fb-status">${statusOpts}</select></div>` : ''}

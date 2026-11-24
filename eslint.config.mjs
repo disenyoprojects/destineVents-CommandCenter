@@ -35,7 +35,7 @@ export default [
   },
   {
     // Node context for build config and Vercel serverless functions
-    files: ['vite.config.ts', 'api/**/*.ts', 'api/**/*.js'],
+    files: ['vite.config.ts', 'api/**/*.ts', 'api/**/*.js', 'scripts/**/*.mjs'],
     languageOptions: { globals: { ...globals.node } },
     rules: { '@typescript-eslint/no-require-imports': 'off' },
   },

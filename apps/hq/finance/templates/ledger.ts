@@ -42,10 +42,12 @@ const accountTypeLabel = (t: string) =>
 
 // ── Cash Ledger rows ──────────────────────────────────────────────────────────
 
+// `paperclip` is the row's receipt button, built by attachments.ts.
 export function ledgerRowHTML(
   e: CashLedgerEntry,
   runningBalance: number,
   accounts: FinancialAccount[],
+  paperclip = '',
 ): string {
   const account = accounts.find(a => a.id === e.account_id);
   const accName = account ? escapeHtml(account.name) : '—';
@@ -62,7 +64,7 @@ export function ledgerRowHTML(
   return `<tr>
     <td style="font-size:11px;color:var(--ink-3)">${displayDate(e.txn_date)}</td>
     <td style="font-size:11px;color:var(--ink-3)">${escapeHtml(e.reference_no ?? '—')}</td>
-    <td style="font-weight:500;color:var(--ink)">${escapeHtml(e.description)}${isLinked ? ` <span class="badge badge-pending" style="font-size:9px">${escapeHtml(e.module_source)}</span>` : ''}${e.attachment_url ? ` <button type="button" title="View attachment" aria-label="View attachment" onclick="openLedgerAttachment(${e.id})" style="background:none;border:none;padding:0;cursor:pointer;color:var(--gold);font-size:11px">&#128206;</button>` : ''}</td>
+    <td style="font-weight:500;color:var(--ink)">${escapeHtml(e.description)}${isLinked ? ` <span class="badge badge-pending" style="font-size:9px">${escapeHtml(e.module_source)}</span>` : ''}${paperclip}</td>
     <td style="font-size:11px;color:var(--ink-3)">${escapeHtml(e.category ?? '—')}</td>
     <td style="font-size:11px;color:var(--ink-3)">${escapeHtml(e.company ?? '—')}</td>
     <td style="font-size:11px;color:var(--ink-3)">${accName}</td>
@@ -80,6 +82,7 @@ export function ledgerFormHTML(
   isEdit: boolean,
   accounts: FinancialAccount[],
   projects: Project[],
+  receiptsHTML = '',
 ): string {
   const activeAccounts = accounts.filter(a => a.is_active || a.id === e.account_id);
   const acctOpts = activeAccounts.length
@@ -121,9 +124,8 @@ export function ledgerFormHTML(
     <div class="form-group"><div class="form-label">Cash Out (₱)</div><input class="form-input" id="cl-out" type="number" min="0" step="0.01" value="${e.cash_out ?? 0}"/></div>
     <div class="form-group full"><div class="form-label">Notes</div><textarea class="form-input" id="cl-notes" rows="2" placeholder="Optional details">${escapeHtml(e.notes ?? '')}</textarea></div>
     <div class="form-group full">
-      <div class="form-label">Attachment (optional)</div>
-      <input class="form-input" id="cl-attachment" type="file" accept="image/*,application/pdf" style="padding:6px"/>
-      ${e.attachment_url && e.id ? `<div style="font-size:11px;margin-top:4px"><button type="button" onclick="openLedgerAttachment(${e.id})" style="background:none;border:none;padding:0;cursor:pointer;color:var(--gold);font:inherit;text-decoration:underline">View current attachment</button> — choosing a new file replaces it.</div>` : ''}
+      <div class="form-label">Receipts (optional)</div>
+      ${receiptsHTML}
     </div>
   </div>
   <div style="font-size:10.5px;color:var(--ink-3);margin-top:8px">Enter an amount in <strong>Cash In</strong> for money received, or <strong>Cash Out</strong> for money spent — not both.</div>`;

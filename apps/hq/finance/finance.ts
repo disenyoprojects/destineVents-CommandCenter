@@ -20,13 +20,14 @@ import {
   _accounts, _ledger, _founderCapital,
   setClients, setProjects, setPartners, setInvoices, setBills,
   setPayroll, setBirFilings, setSOBs, setPOs,
-  setAccounts, setLedger, setFounderCapital, setBudgets,
+  setAccounts, setLedger, setFounderCapital, setBudgets, setAttachments,
 } from '@hq/core/state.ts';
 import { cashPosition, founderEquity } from './ledgerCalc.ts';
 import { monthlySummary, expenseByCategory, revenueByCategory } from './reportsCalc.ts';
 import { barChartHTML, chartHeadingHTML, monthlyBarsHTML, cashFlowTrendHTML } from './templates/reports.ts';
 import { renderSOB } from './sob.ts';
 import { renderCollections } from './ar/collections.ts';
+import { fetchAttachments } from './attachmentService.ts';
 import { renderPayroll } from './payroll.ts';
 import type { Invoice, Bill } from '@shared/types.ts';
 
@@ -137,7 +138,7 @@ export {
 const gEl = (id: string) => document.getElementById(id)!;
 
 export async function loadFinance() {
-  const [inv, bil, pay, bir, clients, projs, parts, sobs, pos, accts, ledger, founder, budgets] = await Promise.all([
+  const [inv, bil, pay, bir, clients, projs, parts, sobs, pos, accts, ledger, founder, budgets, attachments] = await Promise.all([
     fetchInvoices(),
     fetchBills(),
     fetchPayrollRuns(),
@@ -151,6 +152,7 @@ export async function loadFinance() {
     fetchLedger(),
     fetchFounderCapital(),
     fetchBudgets(),
+    fetchAttachments(),
   ]);
   setClients(clients || []);
   setProjects(projs || []);
@@ -165,6 +167,7 @@ export async function loadFinance() {
   setLedger(ledger || []);
   setFounderCapital(founder || []);
   setBudgets(budgets || []);
+  setAttachments(attachments || []);
   renderFinanceOverview(_invoices, _bills);
   renderReceivablesDashboard();
   renderARPipeline();

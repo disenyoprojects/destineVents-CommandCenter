@@ -106,6 +106,9 @@ import {
 import {
   openSOBRecordPayment, setCollectionsFilter, logSOBFollowUp,
 } from '../finance/ar/collections.ts';
+import {
+  openRecordPaperclip, viewRecordAttachment, downloadRecordAttachment, removeRecordAttachment,
+} from '../finance/attachments.ts';
 
 const gEl = (id: string) => document.getElementById(id)!;
 
@@ -548,6 +551,8 @@ declare global {
     openAddLedgerEntry: typeof openAddLedgerEntry; openEditLedgerEntry: typeof openEditLedgerEntry;
     handleDeleteLedgerEntry: typeof handleDeleteLedgerEntry;
     openLedgerAttachment: typeof openLedgerAttachment;
+    openRecordPaperclip: typeof openRecordPaperclip; viewRecordAttachment: typeof viewRecordAttachment;
+    downloadRecordAttachment: typeof downloadRecordAttachment; removeRecordAttachment: typeof removeRecordAttachment;
     openAddAccount: typeof openAddAccount; openEditAccount: typeof openEditAccount;
     handleDeleteAccount: typeof handleDeleteAccount; setDefaultAccount: typeof setDefaultAccount;
     openAddFounderEntry: typeof openAddFounderEntry; openEditFounderEntry: typeof openEditFounderEntry;
@@ -664,6 +669,8 @@ Object.assign(window, {
   setSOBPage,
   // Collections (Receivables)
   setCollectionsFilter, logSOBFollowUp,
+  // Receipt attachments (expenses + Cash Ledger)
+  openRecordPaperclip, viewRecordAttachment, downloadRecordAttachment, removeRecordAttachment,
   // Users (admin)
   approveUser, changeUserRole, removeUser,
   // Meetings

@@ -12,10 +12,14 @@ import {
 } from '../templates/bills.ts';
 import { paginationBar } from '../templates/invoices.ts';
 import { createBill, updateBill, deleteBill, billPaidDate } from '@hq/finance/financeService.ts';
-import { sb } from '@shared/core/supabase';
 import { _bills, _projects, _accounts } from '@hq/core/state.ts';
 import { reverseSourceFromLedger, syncSourceLedger } from '../ledgerPosting.ts';
-import { RECEIPTS_BUCKET, signAttachment, storagePathFromAttachment } from '../receiptAttachment.ts';
+import {
+  recordAttachments, pickedFiles, checkPickedFiles, uploadRecordFiles, reportUpload,
+  openRecordAttachments, openRecordPaperclip, paperclipHTML,
+} from '../attachments.ts';
+import { attachmentSectionHTML } from '../templates/attachments.ts';
+import { canManageFinance } from '../financePermissions.ts';
 import { localISODate } from '@shared/utils/dateUtils.ts';
 import { toast, openModal, closeModal } from '@hq/core/ui.ts';
 import type { Bill } from '@shared/types.ts';
@@ -166,7 +170,7 @@ export function renderAP(bills: Bill[]) {
         </thead>
         <tbody>
           ${paged.length
-            ? paged.map(b => apRowHTML(b, _projects)).join('')
+            ? paged.map(b => apRowHTML(b, _projects, paperclipHTML('bill', b.id, 'var(--green)'))).join('')
             : `<tr><td colspan="9"><div class="empty-state">${hasFilters ? 'No expenses match filters' : 'No expenses yet'}</div></td></tr>`}
         </tbody>
       </table>
@@ -174,70 +178,30 @@ export function renderAP(bills: Bill[]) {
     </div>`;
 }
 
-// ── Receipt storage helpers ───────────────────────────────────────────────────
-
+// ── Receipts ──────────────────────────────────────────────────────────────────
 // An expense receipt is what substantiates a deduction, so it has to stay
-// readable for years. The object's path is stored and signed fresh on click —
-// see receiptAttachment.ts for why a stored signed URL must not be.
+// readable for years. Files, their uploader and date live in attachments.ts.
 
-async function uploadReceiptFile(file: File): Promise<string | null> {
-  if (file.size > 5 * 1024 * 1024) {
-    toast('Receipt file must be under 5 MB', 'error');
-    return null;
-  }
-  const ext  = (file.name.split('.').pop() ?? 'bin').slice(0, 10);
-  const path = `receipts/${crypto.randomUUID()}.${ext}`;
-  const { error } = await sb.storage.from(RECEIPTS_BUCKET).upload(path, file, { upsert: false });
-  if (error) {
-    toast('Receipt upload failed', 'error');
-    return null;
-  }
-  return path;
+function billReceiptsHTML(b: Partial<Bill>): string {
+  const items = b.id ? recordAttachments('bill', b.id) : [];
+  return attachmentSectionHTML('bill', b.id, items, canManageFinance(), 'fb-receipt-file');
 }
 
-// Handles both shapes: a bare path (stored since the expiry fix) and the full
-// signed URL rows written before it.
-async function deleteReceiptFile(stored: string | null | undefined): Promise<void> {
-  if (!stored) return;
-  try {
-    const path = storagePathFromAttachment(stored);
-    if (path) await sb.storage.from(RECEIPTS_BUCKET).remove([path]);
-  } catch { /* non-critical: orphaned file is preferable to a blocking error */ }
-}
-
-// Open a bill's receipt in a new tab, signing it fresh on the way. The blank
-// tab is opened synchronously — a window.open after an await is blocked as a
-// popup. 'noopener' is deliberately not passed: it makes window.open return
-// null, which would strand the click.
-export async function openBillReceipt(id: number): Promise<void> {
-  const bill = _bills.find(b => b.id === id);
-  if (!bill?.receipt_url) { toast('No receipt on this expense', 'error'); return; }
-
-  const tab = window.open('', '_blank');
-  const url = await signAttachment(bill.receipt_url);
-  if (!url) {
-    tab?.close();
-    toast('Could not open the receipt — it may have been removed from storage', 'error');
-    return;
-  }
-  if (tab) {
-    tab.opener = null;
-    tab.location.href = url;
-  } else {
-    toast('Allow pop-ups for this site to view receipts', 'error');
-  }
+// Kept under its old name: rows and the activity log still call it.
+export function openBillReceipt(id: number): void {
+  openRecordPaperclip('bill', id);
 }
 
 export function openAddBill() {
   _editingBillId = null;
-  openModal('New Expense', billFormHTML({}, false, _projects, APP_SETTINGS.finance.ewtRates as string[]), saveBill);
+  openModal('New Expense', billFormHTML({}, false, _projects, APP_SETTINGS.finance.ewtRates as string[], billReceiptsHTML({})), saveBill);
 }
 
 export function openEditBill(id: number) {
   const b = _bills.find(x => x.id === id);
   if (!b) return;
   _editingBillId = id;
-  openModal('Edit Expense', billFormHTML(b, true, _projects, APP_SETTINGS.finance.ewtRates as string[]), saveBill);
+  openModal('Edit Expense', billFormHTML(b, true, _projects, APP_SETTINGS.finance.ewtRates as string[], billReceiptsHTML(b)), saveBill);
 }
 
 export async function saveBill() {
@@ -254,18 +218,12 @@ export async function saveBill() {
       ? (_bills.find(b => b.id === _editingBillId)?.expense_number ?? null)
       : nextDocNumber('EXP', _bills.map(b => b.expense_number ?? '')));
 
-  // ── Receipt file upload ────────────────────────────────────────────────────
-  const existingBill  = _editingBillId ? _bills.find(b => b.id === _editingBillId) : null;
-  let receiptUrl: string | null = existingBill?.receipt_url ?? null;
-
-  const fileInput = document.getElementById('fb-receipt-file') as HTMLInputElement | null;
-  const file = fileInput?.files?.[0] ?? null;
-  if (file) {
-    const uploaded = await uploadReceiptFile(file);
-    if (!uploaded) return;
-    await deleteReceiptFile(existingBill?.receipt_url);
-    receiptUrl = uploaded;
-  }
+  // Receipts are uploaded once the expense exists (they need its id), but a
+  // wrong file is caught now, before anything is saved.
+  const existingBill = _editingBillId ? _bills.find(b => b.id === _editingBillId) : null;
+  const receiptFiles = pickedFiles('fb-receipt-file');
+  const badFile = checkPickedFiles(receiptFiles);
+  if (badFile) { toast(badFile, 'error'); return; }
 
   const payload: Partial<Bill> = {
     vendor,
@@ -279,7 +237,6 @@ export async function saveBill() {
     date:           (document.getElementById('fb-bill-date')   as HTMLInputElement).value           || null,
     due_date:       (document.getElementById('fb-due-date')    as HTMLInputElement).value           || null,
     ewt:            (document.getElementById('fb-ewt')         as HTMLSelectElement).value,
-    receipt_url:    receiptUrl,
     remarks:        (document.getElementById('fb-remarks')     as HTMLTextAreaElement).value.trim() || null,
   };
 
@@ -319,39 +276,15 @@ export async function saveBill() {
       toast('Saved, but no financial account exists yet — add one under Finance → Settings so this shows on the dashboard.', 'error');
     }
   }
+  if (billId && receiptFiles.length) {
+    reportUpload(await uploadRecordFiles('bill', billId, receiptFiles));
+  }
   closeModal();
   loadFinance();
 }
 
 export function openUploadReceipt(id: number) {
-  const b = _bills.find(x => x.id === id);
-  if (!b) return;
-  openModal(
-    `Upload Receipt — ${escapeHtml(b.vendor ?? b.payee ?? '')}`,
-    `<div style="margin-bottom:12px;font-size:11px;color:var(--ink-3)">
-       ${b.receipt_url
-         ? `Current receipt: <button type="button" onclick="openBillReceipt(${b.id})" style="background:none;border:none;padding:0;cursor:pointer;color:var(--blue);font:inherit;text-decoration:underline">View</button> · Upload a new file to replace it.`
-         : 'No receipt attached yet.'}
-     </div>
-     <div class="form-group">
-       <div class="form-label">Receipt File (JPG, PNG or PDF — max 5 MB)</div>
-       <input class="form-input" id="ur-file" type="file" accept="image/*,.pdf" style="padding:6px"/>
-     </div>`,
-    async () => {
-      const fileInput = document.getElementById('ur-file') as HTMLInputElement | null;
-      const file = fileInput?.files?.[0] ?? null;
-      if (!file) { toast('Please select a file', 'error'); return; }
-      const uploaded = await uploadReceiptFile(file);
-      if (!uploaded) return;
-      await deleteReceiptFile(b.receipt_url);
-      const ok = await updateBill(id, { receipt_url: uploaded });
-      if (!ok) { toast('Could not save receipt link', 'error'); return; }
-      toast('Receipt uploaded ✓', 'success');
-      closeModal();
-      loadFinance();
-    },
-    'Upload',
-  );
+  openRecordAttachments('bill', id);
 }
 
 export async function submitBillForApproval(id: number) {

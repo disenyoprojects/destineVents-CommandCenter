@@ -74,14 +74,18 @@ function stripBucket(path: string): string {
 }
 
 // Mint a short-lived URL for an attachment. Returns null when the value cannot
-// be resolved to a path or the file is no longer in the bucket.
-export async function signAttachment(stored: string | null | undefined): Promise<string | null> {
+// be resolved to a path or the file is no longer in the bucket. With
+// `downloadAs`, the link saves the file under that name instead of opening it.
+export async function signAttachment(
+  stored: string | null | undefined,
+  downloadAs?: string,
+): Promise<string | null> {
   const path = storagePathFromAttachment(stored);
   if (!path) return null;
   try {
     const { data, error } = await sb.storage
       .from(RECEIPTS_BUCKET)
-      .createSignedUrl(path, SIGNED_URL_TTL_SECONDS);
+      .createSignedUrl(path, SIGNED_URL_TTL_SECONDS, downloadAs ? { download: downloadAs } : undefined);
     if (error) {
       console.error('signAttachment failed:', error);
       return null;

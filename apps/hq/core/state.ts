@@ -5,6 +5,7 @@ import type {
   Client, Proposal, Partner, Document, Invoice, Bill,
   PayrollRun, Project, ImpactEntry, BirFiling, Event, EventRegistration, SOB, UserRole, Meeting,
   PurchaseOrder, FinancialAccount, CashLedgerEntry, FounderCapitalEntry, Budget,
+  FinanceAttachment,
 } from '@shared/types.ts';
 
 export let _userRole: UserRole = 'admin';
@@ -69,3 +70,6 @@ export function setFounderCapital(v: FounderCapitalEntry[]): void { _founderCapi
 
 export let _budgets: Budget[] = [];
 export function setBudgets(v: Budget[]): void { _budgets = v; }
+
+export let _attachments: FinanceAttachment[] = [];
+export function setAttachments(v: FinanceAttachment[]): void { _attachments = v; }

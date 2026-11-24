@@ -4,7 +4,6 @@ import { validateRequired } from '@shared/utils/validators.ts';
 import { nextDocNumber } from '@shared/services/documents/docNumberService.ts';
 import { getCurrentUser } from '@shared/core/authService.ts';
 import { logDocActivity } from '@shared/services/documents/activityLogService.ts';
-import { sb } from '@shared/core/supabase.ts';
 import {
   createLedgerEntry, updateLedgerEntry, deleteLedgerEntry,
   createAccount, updateAccount, deleteAccount,
@@ -17,7 +16,11 @@ import {
   ledgerRowHTML, ledgerFormHTML, accountRowHTML, accountFormHTML,
 } from './templates/ledger.ts';
 import { runningBalanceMap, accountBalance, cashPosition } from './ledgerCalc.ts';
-import { RECEIPTS_BUCKET, signAttachment } from './receiptAttachment.ts';
+import {
+  recordAttachments, pickedFiles, checkPickedFiles, uploadRecordFiles, reportUpload,
+  openRecordPaperclip, paperclipHTML,
+} from './attachments.ts';
+import { attachmentSectionHTML } from './templates/attachments.ts';
 import { canManageFinance } from './financePermissions.ts';
 import { APP_SETTINGS } from '@config/settings.ts';
 import { loadFinance } from './finance.ts';
@@ -98,7 +101,7 @@ export function renderCashLedger(): void {
   const hasFilters = !!(_ledgerAccountFilter || _ledgerCompanyFilter || _ledgerSearch);
 
   const rows = filtered.length
-    ? filtered.map(e => ledgerRowHTML(e, balances.get(e.id) ?? NaN, _accounts)).join('')
+    ? filtered.map(e => ledgerRowHTML(e, balances.get(e.id) ?? NaN, _accounts, paperclipHTML('ledger', e.id, 'var(--gold)'))).join('')
     : `<tr><td colspan="10"><div class="empty-state">${hasFilters ? 'No entries match filters' : 'No ledger entries yet — click “New Entry” to start.'}</div></td></tr>`;
 
   container.innerHTML =
@@ -136,7 +139,7 @@ export function openAddLedgerEntry(): void {
     return;
   }
   _editingLedgerId = null;
-  openModal('New Ledger Entry', ledgerFormHTML({}, false, _accounts, _projects), saveLedgerEntry);
+  openModal('New Ledger Entry', ledgerFormHTML({}, false, _accounts, _projects, ledgerReceiptsHTML({})), saveLedgerEntry);
 }
 
 export function openEditLedgerEntry(id: number): void {
@@ -147,7 +150,7 @@ export function openEditLedgerEntry(id: number): void {
     return;
   }
   _editingLedgerId = id;
-  openModal('Edit Ledger Entry', ledgerFormHTML(e, true, _accounts, _projects), saveLedgerEntry);
+  openModal('Edit Ledger Entry', ledgerFormHTML(e, true, _accounts, _projects, ledgerReceiptsHTML(e)), saveLedgerEntry);
 }
 
 // Entries posted by another module are managed from that module, not here.
@@ -189,45 +192,16 @@ function _readLedgerForm(): Partial<CashLedgerEntry> | null {
   };
 }
 
-// Upload an optional ledger attachment to the shared receipts bucket; returns
-// the object's path, or null on failure (upload issues never block saving the
-// entry). The path is what gets stored — see receiptAttachment.ts for why a
-// signed URL must not be.
-async function _uploadLedgerAttachment(file: File): Promise<string | null> {
-  if (file.size > 5 * 1024 * 1024) { toast('Attachment must be under 5 MB', 'error'); return null; }
-  const ext = (file.name.split('.').pop() ?? 'bin').slice(0, 10);
-  const path = `ledger/${crypto.randomUUID()}.${ext}`;
-  const { error } = await sb.storage.from(RECEIPTS_BUCKET).upload(path, file, { upsert: false });
-  if (error) { console.error('ledger attachment upload failed:', error); toast('Attachment upload failed', 'error'); return null; }
-  return path;
+// Receipts on a ledger entry — several files, each with uploader and date —
+// live in attachments.ts, shared with Payables.
+function ledgerReceiptsHTML(e: Partial<CashLedgerEntry>): string {
+  const items = e.id ? recordAttachments('ledger', e.id) : [];
+  return attachmentSectionHTML('ledger', e.id, items, canManageFinance(), 'cl-attachment');
 }
 
-// Open a receipt in a new tab, signing it fresh on the way. The blank tab is
-// opened first, synchronously — a window.open after an await is treated as a
-// popup and blocked.
-//
-// Note the missing 'noopener': passing it makes window.open return null by
-// spec, which would leave an orphan blank tab and send this tab to the file
-// instead. The opener is severed by hand below, which is the same protection.
-export async function openLedgerAttachment(id: number): Promise<void> {
-  const entry = _ledger.find(e => e.id === id);
-  if (!entry?.attachment_url) { toast('No attachment on this entry', 'error'); return; }
-
-  const tab = window.open('', '_blank');
-  const url = await signAttachment(entry.attachment_url);
-  if (!url) {
-    tab?.close();
-    toast('Could not open the receipt — it may have been removed from storage', 'error');
-    return;
-  }
-  if (tab) {
-    tab.opener = null;
-    tab.location.href = url;
-  } else {
-    // Popups blocked. Say so rather than navigating away from HQ and losing
-    // whatever the person was in the middle of.
-    toast('Allow pop-ups for this site to view receipts', 'error');
-  }
+// Kept under its old name: rows and older links still call it.
+export function openLedgerAttachment(id: number): void {
+  openRecordPaperclip('ledger', id);
 }
 
 export async function saveLedgerEntry(): Promise<void> {
@@ -235,13 +209,11 @@ export async function saveLedgerEntry(): Promise<void> {
   const payload = _readLedgerForm();
   if (!payload) return;
 
-  // Optional attachment — upload before persisting so the path is part of the row.
-  const fileInput = document.getElementById('cl-attachment') as HTMLInputElement | null;
-  const file = fileInput?.files?.[0] ?? null;
-  if (file) {
-    const path = await _uploadLedgerAttachment(file);
-    if (path) payload.attachment_url = path;
-  }
+  // Receipts are uploaded once the entry exists (they need its id), but a
+  // wrong file is caught now, before anything is saved.
+  const receiptFiles = pickedFiles('cl-attachment');
+  const badFile = checkPickedFiles(receiptFiles);
+  if (badFile) { toast(badFile, 'error'); return; }
   try {
     const user = await getCurrentUser();
     const actor = user?.name ?? user?.email ?? null;
@@ -250,6 +222,7 @@ export async function saveLedgerEntry(): Promise<void> {
       if (!ok) { toast('Could not update entry', 'error'); return; }
       await logDocActivity('ledger', _editingLedgerId, payload.reference_no ?? null, 'updated', actor);
       toast('Ledger entry updated', 'success');
+      if (receiptFiles.length) reportUpload(await uploadRecordFiles('ledger', _editingLedgerId, receiptFiles));
     } else {
       payload.reference_no = nextDocNumber('CL', _ledger.map(e => e.reference_no ?? ''));
       payload.module_source = 'Manual';
@@ -258,6 +231,7 @@ export async function saveLedgerEntry(): Promise<void> {
       if (!result) { toast('Could not save entry. Please try again.', 'error'); return; }
       await logDocActivity('ledger', result.id, result.reference_no ?? null, 'created', actor);
       toast('Ledger entry saved', 'success');
+      if (receiptFiles.length) reportUpload(await uploadRecordFiles('ledger', result.id, receiptFiles));
     }
     closeModal();
     await loadFinance();

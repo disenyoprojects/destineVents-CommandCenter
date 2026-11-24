@@ -463,6 +463,24 @@ export interface FinancialAccount {
   created_at: string;
 }
 
+// One receipt or supporting file on an expense ('bill') or Cash Ledger entry
+// ('ledger'). Migration 022. A removed file keeps its row and its stored file —
+// removed_at only takes it out of view.
+export interface FinanceAttachment {
+  id: number;
+  record_type: 'bill' | 'ledger';
+  record_id: number;
+  storage_path: string;
+  file_name: string | null;
+  mime_type: string | null;
+  size_bytes: number | null;
+  uploaded_by: string | null;
+  uploaded_by_name: string | null;
+  uploaded_at: string | null;
+  removed_at: string | null;
+  removed_by_name: string | null;
+}
+
 export interface CashLedgerEntry {
   id: number;
   reference_no: string | null;
