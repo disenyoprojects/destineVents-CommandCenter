@@ -17,6 +17,7 @@ const ACTION_ICON: Record<string, string> = {
   submitted:  '→',
   signed:     '✍',
   fulfilled:  '✔',
+  followed_up: '☎',
 };
 
 const ACTION_COLOR: Record<string, string> = {
@@ -34,6 +35,7 @@ const ACTION_COLOR: Record<string, string> = {
   submitted:  'var(--amber)',
   signed:     'var(--green)',
   fulfilled:  'var(--green)',
+  followed_up: 'var(--blue)',
 };
 
 export async function openDocActivityLog(
@@ -73,7 +75,7 @@ export async function openDocActivityLog(
             <div style="position:absolute;left:-24px;top:2px;width:16px;height:16px;border-radius:50%;
                         background:${color};color:#fff;font-size:9px;display:flex;align-items:center;
                         justify-content:center;font-weight:700">${icon}</div>
-            <div style="font-size:13px;font-weight:600;color:var(--ink);text-transform:capitalize">${escapeHtml(log.action)}</div>
+            <div style="font-size:13px;font-weight:600;color:var(--ink);text-transform:capitalize">${escapeHtml(log.action.replace(/_/g, ' '))}</div>
             <div style="font-size:11px;color:var(--ink-3);margin-top:2px">
               ${log.performed_by ? `<span style="color:var(--ink-2)">${escapeHtml(log.performed_by)}</span> · ` : ''}${date}
             </div>

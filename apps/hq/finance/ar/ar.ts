@@ -22,7 +22,9 @@ import { updateProject } from '@hq/projects/projectService.ts';
 import {
   _invoices, _bills, _payroll, _sobs, _clients, _projects, _accounts,
 } from '@hq/core/state.ts';
-import { reverseSourceFromLedger, syncSourceLedger } from '../ledgerPosting.ts';
+import { reverseSourceFromLedger } from '../ledgerPosting.ts';
+import { syncInvoiceToLedger } from './invoiceLedger.ts';
+import { collectionFor, isBilledSOB, receiptsForSOB, sobForInvoice } from '../collectionsCalc.ts';
 import { canTransition } from '@shared/documents/docTransitions.ts';
 import { PROJECT_PIPELINE, isInFlight, type ProjectStatus } from '@shared/projects/projectStatus.ts';
 import { toast, openModal, closeModal } from '@hq/core/ui.ts';
@@ -32,24 +34,17 @@ import { loadFinance } from '../finance.ts';
 const gEl = (id: string) => document.getElementById(id)!;
 const gVal = (id: string) => (document.getElementById(id) as HTMLInputElement).value;
 
-// Single source of truth for what a paid invoice looks like in the Cash Ledger.
-// Called both when a payment is first recorded and whenever the invoice is
-// edited afterwards — editing a paid invoice's amount or payment date used to
-// leave the ledger row (and so the whole dashboard) showing the old figure.
-async function syncInvoiceToLedger(invoice: Invoice, createdBy: string | null = null) {
-  return syncSourceLedger({
-    isCash: invoice.status === 'Paid' && !invoice.archived_at,
-    sourceType: 'invoice', sourceId: invoice.id, moduleSource: 'AR',
-    category: 'Client Payment',
-    description: `Client payment — ${invoice.client ?? 'Invoice'}${invoice.or_num ? ` (${invoice.or_num})` : ''}`,
-    txnDate: invoice.payment_date ?? invoice.date ?? null,
-    referenceNo: invoice.or_num ?? null,
-    accounts: _accounts,
-    projectId: invoice.project_id ?? null,
-    paymentMethod: invoice.payment_method ?? null,
-    cashIn: invoice.amount,
-    createdBy: createdBy ?? invoice.received_by ?? null,
-  });
+// A receipt that belongs to a billed statement may collect at most what that
+// statement still has owing. Without this, the full-amount receipt an older
+// conversion raised could be marked Paid after a part payment was recorded
+// through Collections, and the ledger would take the money twice. Returns the
+// message to show, or null when the amount is fine.
+function overpaysStatement(invoice: Partial<Invoice>, amount: number): string | null {
+  const sob = sobForInvoice(invoice as Invoice, _sobs);
+  if (!sob || !isBilledSOB(sob)) return null;
+  const owed = collectionFor(sob, _invoices, todayISO()).outstanding;
+  if (amount <= owed + 0.005) return null;
+  return `${sob.sob_num} only has ${formatCurrency(owed)} left owing — record the payment from the statement (Collections tab) instead`;
 }
 
 // ── AR module-level state ─────────────────────────────────────────────────────
@@ -146,7 +141,7 @@ export async function advanceARProjectStage(id: number) {
 export function renderReceivablesDashboard() {
   const el = document.getElementById('receivables-stats');
   if (!el) return;
-  const summary = calcFinanceSummary(_invoices, _bills, _payroll);
+  const summary = calcFinanceSummary(_invoices, _bills, _payroll, new Date(), _sobs);
   el.innerHTML = `
     <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px">
       <div class="stat-card" style="padding:10px 12px">
@@ -156,7 +151,7 @@ export function renderReceivablesDashboard() {
       <div class="stat-card" style="padding:10px 12px">
         <div class="stat-label">Overdue</div>
         <div style="font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:700;color:var(--red)">${formatCurrency(summary.overdueTotal)}</div>
-        <div style="font-size:10px;color:var(--ink-3);margin-top:2px">${summary.overdueCount} invoice${summary.overdueCount !== 1 ? 's' : ''}</div>
+        <div style="font-size:10px;color:var(--ink-3);margin-top:2px">${summary.overdueCount} account${summary.overdueCount !== 1 ? 's' : ''} · 7+ days late</div>
       </div>
       <div class="stat-card" style="padding:10px 12px">
         <div class="stat-label">Collected Today</div>
@@ -281,7 +276,8 @@ export function openAddInvoice() {
   _editingInvoiceId    = null;
   _pendingSOBConvertId = null;
   const autoNum = nextDocNumber('OR', _invoices.map(i => i.or_num));
-  const unlinkedSOBs = _sobs.filter(s => !s.linked_invoice_id && !s.archived_at && !['Paid','Cancelled'].includes(s.status));
+  const unlinkedSOBs = _sobs.filter(s =>
+    !s.archived_at && !['Paid', 'Cancelled', 'Superseded'].includes(s.status) && !receiptsForSOB(s, _invoices).length);
   const sobTip = unlinkedSOBs.length > 0
     ? `<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:4px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:#1e40af">
         💡 <strong>${unlinkedSOBs.length} unlinked SOB${unlinkedSOBs.length !== 1 ? 's' : ''}</strong> exist (${unlinkedSOBs.map(s => escapeHtml(s.sob_num)).join(', ')}). Consider converting one instead of creating manually.
@@ -308,7 +304,8 @@ export function openInvoiceFromSOB(draft: Partial<Invoice>, items: InvoiceLineIt
 export async function openEditInvoice(id: number) {
   const i = _invoices.find(x => x.id === id);
   if (!i) return;
-  _editingInvoiceId = id;
+  _editingInvoiceId    = id;
+  _pendingSOBConvertId = null;
   const items = await fetchLineItems(id);
   openModal('Edit Invoice', invoiceFormHTML(i, items, _clients, _projects), saveInvoice);
 }
@@ -344,6 +341,14 @@ export async function saveInvoice() {
     due:        gVal('fi-due')  || null,
   };
   if (projVal) payload.project_id = +projVal;
+  // A receipt converted from a statement collects against it (migration 021).
+  if (_pendingSOBConvertId && !_editingInvoiceId) payload.sob_id = _pendingSOBConvertId;
+
+  const before = _editingInvoiceId ? _invoices.find(i => i.id === _editingInvoiceId) : undefined;
+  if (status === 'Paid' && before?.status !== 'Paid') {
+    const overpaid = overpaysStatement({ ...(before ?? {}), ...payload }, amount);
+    if (overpaid) { toast(overpaid, 'error'); return; }
+  }
 
   // Only include new columns when they have values — avoids PGRST204 if
   // the schema cache hasn't refreshed after the migration yet.
@@ -372,7 +377,9 @@ export async function saveInvoice() {
     toast('Invoice updated', 'success');
     await logDocActivity('invoice', invoiceId, or_num, 'updated', actor);
   } else {
-    const result = await createInvoice(payload);
+    // sob_id is optional here: before migration 021 the conversion still links
+    // the old way, through the statement's linked_invoice_id below.
+    const result = await createInvoice(payload, ['sob_id']);
     if (!result) { toast('Could not add invoice. Please try again.', 'error'); return; }
     invoiceId = result.id;
     toast('Invoice added', 'success');
@@ -384,7 +391,12 @@ export async function saveInvoice() {
   }
 
   if (_pendingSOBConvertId && invoiceId) {
-    await updateSOB(_pendingSOBConvertId, { linked_invoice_id: invoiceId, status: 'Sent' } as Partial<SOB>);
+    // Asking for Sent from Viewed or Partially Paid is refused by the database,
+    // and took the link down with it — so the status is only sent when legal.
+    const converted = _sobs.find(s => s.id === _pendingSOBConvertId);
+    const patch: Partial<SOB> = { linked_invoice_id: invoiceId };
+    if (converted && canTransition('sob', converted.status, 'Sent')) patch.status = 'Sent';
+    await updateSOB(_pendingSOBConvertId, patch);
     _pendingSOBConvertId = null;
   }
 
@@ -433,7 +445,8 @@ export async function openDuplicateInvoice(id: number) {
   const original = _invoices.find(x => x.id === id);
   if (!original) return;
   const items = await fetchLineItems(id);
-  _editingInvoiceId = null;
+  _editingInvoiceId    = null;
+  _pendingSOBConvertId = null;
   const draft: Partial<Invoice> = {
     client:     original.client,
     amount:     original.amount,
@@ -623,6 +636,9 @@ export function openRecordPayment(id: number) {
   if (!inv) return;
   if (inv.status === 'Paid') { toast('This invoice is already marked as paid', 'error'); return; }
 
+  const overpaid = overpaysStatement(inv, inv.amount);
+  if (overpaid) { toast(overpaid, 'error'); return; }
+
   if (!canTransition('invoice', inv.status, 'Paid')) {
     if (!canTransition('invoice', inv.status, 'Issued')) {
       toast(`A ${inv.status} invoice cannot be paid`, 'error');
@@ -793,7 +809,7 @@ export function copyPaymentLink() {
 export function openPaymentHistory(id: number) {
   const inv = _invoices.find(x => x.id === id);
   if (!inv || inv.status !== 'Paid') return;
-  const linkedSOB = _sobs.find(s => s.linked_invoice_id === id);
+  const linkedSOB = sobForInvoice(inv, _sobs);
   const proj      = _projects.find(p => p.id === inv.project_id);
   openModal(`Payment History — ${escapeHtml(inv.or_num)}`, `
     <div style="font-size:11px;color:var(--ink-3);margin-bottom:14px">
@@ -858,7 +874,7 @@ export function renderOfficialReceipts() {
   const pageRows  = sorted.slice(pStart, pStart + OR_PAGE_SIZE);
 
   tbodyEl.innerHTML = pageRows.map(i =>
-    orRowHTML(i, i.project_id ? _projects.find(p => p.id === i.project_id) : null, _sobs.find(s => s.linked_invoice_id === i.id))
+    orRowHTML(i, i.project_id ? _projects.find(p => p.id === i.project_id) : null, sobForInvoice(i, _sobs))
   ).join('');
 
   if (pagEl) pagEl.innerHTML = paginationBar(_orPage, sorted.length, OR_PAGE_SIZE, 'setORPage');
@@ -868,7 +884,7 @@ export async function printOfficialReceipt(id: number) {
   const inv = _invoices.find(x => x.id === id);
   if (!inv) return;
   if (inv.status !== 'Paid') { toast('OR can only be printed for paid invoices', 'error'); return; }
-  const linkedSOB = _sobs.find(s => s.linked_invoice_id === id);
+  const linkedSOB = sobForInvoice(inv, _sobs);
   const proj      = _projects.find(p => p.id === inv.project_id);
   const { company, banking } = APP_SETTINGS;
 

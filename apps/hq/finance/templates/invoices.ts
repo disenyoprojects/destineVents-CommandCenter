@@ -3,6 +3,7 @@ import { escapeHtml, statusClass } from '@shared/utils/helpers.ts';
 import { formatCurrency } from '@shared/utils/formatUtils.ts';
 import { formatDateShort, todayISO } from '@shared/utils/dateUtils.ts';
 import { invoiceDisplayStatus } from '../arCalc.ts';
+import { sobForInvoice } from '../collectionsCalc.ts';
 import { canTransition, statusOptions } from '@shared/documents/docTransitions.ts';
 
 function toISODate(val: string | null | undefined): string {
@@ -38,7 +39,7 @@ export function invoiceRowHTML(i: Invoice, sobs: SOB[], bpiEnabled: boolean): st
   const payMethodBadge = i.status === 'Paid' && i.payment_method
     ? `<span style="font-size:10px;color:var(--ink-3);margin-left:4px">${escapeHtml(i.payment_method)}</span>`
     : '';
-  const linkedSOB  = sobs.find(s => s.linked_invoice_id === i.id);
+  const linkedSOB  = sobForInvoice(i, sobs);
   const sobBadge   = linkedSOB
     ? `<div style="font-size:9px;color:var(--ink-3);margin-top:1px">from ${escapeHtml(linkedSOB.sob_num)}</div>`
     : '';

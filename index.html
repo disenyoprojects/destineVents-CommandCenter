@@ -381,6 +381,7 @@
       <!-- Sub-nav -->
       <div class="sub-tabs" id="receivables-subtabs">
         <div class="sub-tab active" onclick="showReceivablesTab('overview',this)">Overview</div>
+        <div class="sub-tab" onclick="showReceivablesTab('collections',this)">Collections</div>
         <div class="sub-tab" onclick="showReceivablesTab('sob',this)">Statement of Billing</div>
         <div class="sub-tab" onclick="showReceivablesTab('invoice',this)">Invoices</div>
         <div class="sub-tab" onclick="showReceivablesTab('or',this)">Official Receipts</div>
@@ -391,6 +392,18 @@
         <div id="receivables-stats" style="margin-bottom:16px"></div>
         <div id="ar-pipeline"></div>
         <div id="ar-recent-payments" style="margin-top:16px"></div>
+      </div>
+
+      <!-- Collections tab: every statement — billed, collected, owed, who to chase -->
+      <div class="rtab" id="rtab-collections">
+        <div id="collections-stats" style="margin-bottom:12px"></div>
+        <div id="collections-filters" class="flex-gap" style="gap:6px;flex-wrap:wrap;margin-bottom:10px"></div>
+        <div style="border:1px solid var(--ink-4);overflow-x:auto">
+          <table class="ledger-table">
+            <thead><tr><th>Client</th><th>Project / Service</th><th>SOB #</th><th>Issue Date</th><th>Due Date</th><th>Billed</th><th>Collected</th><th>Outstanding</th><th>Status</th><th>Next Follow-up</th><th></th></tr></thead>
+            <tbody id="collections-tbody"></tbody>
+          </table>
+        </div>
       </div>
 
       <!-- Statement of Billing tab -->

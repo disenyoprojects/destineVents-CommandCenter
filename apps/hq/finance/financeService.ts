@@ -5,7 +5,8 @@ import { localISODate } from '@shared/utils/dateUtils.ts';
 import {
   isCountableInvoice, isOutstandingInvoice, isOverdueInvoice, invoicePaymentDate,
 } from './arCalc.ts';
-import type { Invoice, InvoiceLineItem, Bill, PayrollRun, FinanceSummary } from '@shared/types';
+import { collectionFor, collectionsSummary, isBilledSOB, isCoveredBySOB } from './collectionsCalc.ts';
+import type { Invoice, InvoiceLineItem, Bill, PayrollRun, FinanceSummary, SOB } from '@shared/types';
 
 // The date cash actually left for an expense. `paid_at` is set when the expense
 // is marked Paid; older rows fall back to the bill's own date.
@@ -75,10 +76,26 @@ export async function fetchInvoices(): Promise<Invoice[]> {
   return (data ?? []) as Invoice[];
 }
 
-export async function createInvoice(data: Partial<Invoice>): Promise<Invoice | null> {
+// optionalColumns: columns a pending migration adds, dropped and retried if the
+// database does not know them yet — the same idea as updateWithOptionalColumns.
+export async function createInvoice(
+  data: Partial<Invoice>,
+  optionalColumns: ReadonlyArray<string> = [],
+): Promise<Invoice | null> {
   const { data: result, error } = await sb.from('invoices').insert(data).select();
-  if (error) { handleServiceError('createInvoice', error); return null; }
-  return (result as Invoice[] | null)?.[0] ?? null;
+  if (!error) return (result as Invoice[] | null)?.[0] ?? null;
+
+  const hasOptional = optionalColumns.some(col => col in data);
+  if (!isUnknownColumnError(error) || !hasOptional) {
+    handleServiceError('createInvoice', error);
+    return null;
+  }
+  const fallback: Record<string, unknown> = { ...data };
+  for (const col of optionalColumns) delete fallback[col];
+  const { data: retried, error: retryError } = await sb.from('invoices').insert(fallback).select();
+  if (retryError) { handleServiceError('createInvoice', retryError); return null; }
+  logger.warn('createInvoice', `Saved without ${optionalColumns.join(', ')} — run the pending migration in Supabase.`);
+  return (retried as Invoice[] | null)?.[0] ?? null;
 }
 
 export async function updateInvoice(id: number, data: Partial<Invoice>): Promise<boolean> {
@@ -142,6 +159,7 @@ export function calcFinanceSummary(
   bills: Bill[],
   payrollRuns: PayrollRun[] = [],
   now: Date = new Date(),
+  sobs: SOB[] = [],
 ): FinanceSummary {
   const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const today = localISODate(now);
@@ -154,7 +172,13 @@ export function calcFinanceSummary(
   const liveBills    = bills.filter(b => !b.archived_at);
   const paidBills    = liveBills.filter(b => b.status === 'Paid');
 
-  const arOutstanding    = liveInvoices.filter(isOutstandingInvoice).reduce((s, i) => s + (i.amount || 0), 0);
+  // Receivables are billed minus collected per Statement of Billing, plus any
+  // invoice raised on its own without a statement. A receipt that collects
+  // against a statement is already inside that statement's balance, so it is
+  // left out of the standalone half — counting it there too would double it.
+  const sobRows       = collectionsSummary(sobs.filter(isBilledSOB).map(s => collectionFor(s, liveInvoices, today)));
+  const standalone    = liveInvoices.filter(i => isOutstandingInvoice(i) && !isCoveredBySOB(i, sobs));
+  const arOutstanding = sobRows.outstanding + standalone.reduce((s, i) => s + (i.amount || 0), 0);
   const apOutstanding    = liveBills.filter(b => !['Paid', 'Cancelled'].includes(b.status)).reduce((s, b) => s + (b.amount || 0), 0);
   const revenueCollected = paidInvoices.reduce((s, i) => s + (i.amount || 0), 0);
   const expensesPaid     = paidBills.reduce((s, b) => s + (b.amount || 0), 0);
@@ -168,7 +192,7 @@ export function calcFinanceSummary(
     .reduce((s, b) => s + (b.amount || 0), 0);
 
   // Derived, not stored — nothing in the app ever wrote the 'Overdue' status.
-  const overdueInvoices = liveInvoices.filter(i => isOverdueInvoice(i, today));
+  const overdueInvoices = standalone.filter(i => isOverdueInvoice(i, today));
   const pendingBills    = liveBills.filter(b => !['Paid', 'Cancelled'].includes(b.status));
   const payrollDue      = payrollRuns.filter(p => p.status === 'Pending').reduce((s, p) => s + (p.net || 0), 0);
 
@@ -192,8 +216,8 @@ export function calcFinanceSummary(
     collectedThisMonth,
     expensesPaid,
     netProfit: revenueCollected - expensesPaid,
-    overdueCount: overdueInvoices.length,
-    overdueTotal: overdueInvoices.reduce((s, i) => s + (i.amount || 0), 0),
+    overdueCount: sobRows.overdueCount + overdueInvoices.length,
+    overdueTotal: sobRows.overdue + overdueInvoices.reduce((s, i) => s + (i.amount || 0), 0),
     pendingBillsCount: pendingBills.length,
     payrollDue,
     cashFlowThisMonth: collectedThisMonth - expensesPaidThisMonth,

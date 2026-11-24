@@ -26,6 +26,7 @@ import { cashPosition, founderEquity } from './ledgerCalc.ts';
 import { monthlySummary, expenseByCategory, revenueByCategory } from './reportsCalc.ts';
 import { barChartHTML, chartHeadingHTML, monthlyBarsHTML, cashFlowTrendHTML } from './templates/reports.ts';
 import { renderSOB } from './sob.ts';
+import { renderCollections } from './ar/collections.ts';
 import { renderPayroll } from './payroll.ts';
 import type { Invoice, Bill } from '@shared/types.ts';
 
@@ -174,6 +175,7 @@ export async function loadFinance() {
   renderPayroll(_payroll);
   renderBIR();
   renderSOB(_sobs);
+  renderCollections();
   renderCashLedger();
   renderFounderCapital();
   renderBudgetPlanner();
@@ -297,7 +299,7 @@ function _dashboardGroupsHTML(summary: ReturnType<typeof calcFinanceSummary>): s
       card('Total Cash In', allTime.totalCashIn, 'var(--green)', 'All time') +
       card('Total Cash Out', allTime.totalCashOut, 'var(--red)', 'All time')),
     group('Receivables &amp; Payables', 'Invoices and bills',
-      card('Accounts Receivable', summary.arOutstanding, '', `${summary.overdueCount} overdue invoice${summary.overdueCount !== 1 ? 's' : ''}`) +
+      card('Accounts Receivable', summary.arOutstanding, '', `${summary.overdueCount} overdue (7+ days late)`) +
       card('Accounts Payable', summary.apOutstanding, '', `${summary.pendingBillsCount} pending bills`)),
     group('Founder Capital', '',
       card('Capital Invested', eq.totalCapital) +
@@ -307,7 +309,7 @@ function _dashboardGroupsHTML(summary: ReturnType<typeof calcFinanceSummary>): s
 }
 
 export function renderFinanceOverview(invoices: Invoice[], bills: Bill[]) {
-  const summary = calcFinanceSummary(invoices, bills, _payroll);
+  const summary = calcFinanceSummary(invoices, bills, _payroll, new Date(), _sobs);
 
   // ── KPI groups (handout §2) ─────────────────────────────────────────────────
   gEl('finance-stats').innerHTML = _dashboardGroupsHTML(summary);

@@ -17,11 +17,13 @@ const TRANSITIONS: Record<DocKind, Record<string, readonly string[]>> = {
     Draft: ['Sent', 'Lost', 'Expired'],
     Sent:  ['Won', 'Lost', 'Expired'],
   },
+  // Superseded (migration 021): the statement was amended and replaced by a
+  // new one, so it is no longer owed but stays on file as the billing record.
   sob: {
-    Draft:            ['Sent', 'Cancelled'],
-    Sent:             ['Viewed', 'Partially Paid', 'Paid', 'Cancelled'],
-    Viewed:           ['Partially Paid', 'Paid', 'Cancelled'],
-    'Partially Paid': ['Paid', 'Cancelled'],
+    Draft:            ['Sent', 'Cancelled', 'Superseded'],
+    Sent:             ['Viewed', 'Partially Paid', 'Paid', 'Cancelled', 'Superseded'],
+    Viewed:           ['Partially Paid', 'Paid', 'Cancelled', 'Superseded'],
+    'Partially Paid': ['Paid', 'Cancelled', 'Superseded'],
   },
   invoice: {
     Draft:  ['Issued', 'Cancelled'],
@@ -58,7 +60,7 @@ const TRANSITIONS: Record<DocKind, Record<string, readonly string[]>> = {
 // rather than however the transition map happened to be written.
 const STATUS_ORDER: Record<DocKind, readonly string[]> = {
   quotation: ['Draft', 'Sent', 'Won', 'Lost', 'Expired'],
-  sob:       ['Draft', 'Sent', 'Viewed', 'Partially Paid', 'Paid', 'Cancelled'],
+  sob:       ['Draft', 'Sent', 'Viewed', 'Partially Paid', 'Paid', 'Cancelled', 'Superseded'],
   invoice:   ['Draft', 'Issued', 'Paid', 'Cancelled'],
   payroll:   ['Draft', 'Pending', 'Paid'],
   bill:      ['Pending', 'For Approval', 'Approved', 'Rejected', 'Paid', 'Cancelled'],

@@ -29,6 +29,7 @@ export type DocAction =
   | 'signed'
   | 'fulfilled'
   | 'deleted'
+  | 'followed_up'
 
 export interface DocActivityLog {
   id: number

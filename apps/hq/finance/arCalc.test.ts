@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { Invoice } from '@shared/types.ts';
 import {
   isCountableInvoice, isOutstandingInvoice, isOverdueInvoice,
-  invoiceDisplayStatus, invoicePaymentDate,
+  invoiceDisplayStatus, invoicePaymentDate, daysPastDue,
 } from './arCalc.ts';
 
 const TODAY = '2026-08-06';
@@ -42,8 +42,12 @@ describe('isOutstandingInvoice', () => {
 });
 
 describe('isOverdueInvoice', () => {
-  it('flags an unpaid invoice past its due date', () => {
-    expect(isOverdueInvoice(inv({ due: '2026-08-05' }), TODAY)).toBe(true);
+  it('flags an unpaid invoice 7 days past its due date', () => {
+    expect(isOverdueInvoice(inv({ due: '2026-07-30' }), TODAY)).toBe(true);
+  });
+
+  it('does not flag an invoice only 6 days late — it is still Due', () => {
+    expect(isOverdueInvoice(inv({ due: '2026-07-31' }), TODAY)).toBe(false);
   });
 
   it('does not flag an invoice due today', () => {
@@ -71,13 +75,13 @@ describe('isOverdueInvoice', () => {
   });
 
   it('tolerates a full timestamp in the due field', () => {
-    expect(isOverdueInvoice(inv({ due: '2026-08-05T14:30:00Z' }), TODAY)).toBe(true);
+    expect(isOverdueInvoice(inv({ due: '2026-07-30T14:30:00Z' }), TODAY)).toBe(true);
   });
 });
 
 describe('invoiceDisplayStatus', () => {
   it('reports Overdue for a past-due issued invoice', () => {
-    expect(invoiceDisplayStatus(inv({ status: 'Issued', due: '2026-08-01' }), TODAY)).toBe('Overdue');
+    expect(invoiceDisplayStatus(inv({ status: 'Issued', due: '2026-07-20' }), TODAY)).toBe('Overdue');
   });
 
   it('keeps the stored status when not past due', () => {
@@ -100,5 +104,27 @@ describe('invoicePaymentDate', () => {
 
   it('returns an empty string when neither is set', () => {
     expect(invoicePaymentDate(inv())).toBe('');
+  });
+});
+
+describe('daysPastDue', () => {
+  it('is 0 on the due date, negative before, positive after', () => {
+    expect(daysPastDue(TODAY, TODAY)).toBe(0);
+    expect(daysPastDue('2026-08-13', TODAY)).toBe(-7);
+    expect(daysPastDue('2026-07-30', TODAY)).toBe(7);
+  });
+
+  it('counts across a month end', () => {
+    expect(daysPastDue('2026-07-31', '2026-08-02')).toBe(2);
+  });
+
+  it('reads a written-out date and ignores one it cannot read', () => {
+    expect(daysPastDue('Aug 1, 2026', TODAY)).toBe(5);
+    expect(daysPastDue('—', TODAY)).toBeNull();
+  });
+
+  it('is null without a due date', () => {
+    expect(daysPastDue(null, TODAY)).toBeNull();
+    expect(daysPastDue('', TODAY)).toBeNull();
   });
 });

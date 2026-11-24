@@ -1,6 +1,6 @@
 import { formatCurrency } from '@shared/utils/formatUtils.ts';
 import { formatDateShort, todayISO } from '@shared/utils/dateUtils.ts';
-import { escapeHtml, statusClass } from '@shared/utils/helpers.ts';
+import { escapeHtml } from '@shared/utils/helpers.ts';
 import { validateRequired } from '@shared/utils/validators.ts';
 import { isFilledLineItem, itemsMissingDescription } from '@shared/documents/lineItems.ts';
 import { APP_SETTINGS } from '@config/settings.ts';
@@ -9,6 +9,8 @@ import {
 } from '@hq/finance/sobService.ts';
 import { _clients, _projects, _invoices, _sobs, setSOBs } from '@hq/core/state.ts';
 import { toast, openModal, closeModal } from '@hq/core/ui.ts';
+import { collectionFor, receiptsForSOB } from './collectionsCalc.ts';
+import { collectionBadgeClass } from './templates/collections.ts';
 import type { SOB, SOBLineItem, InvoiceLineItem } from '@shared/types.ts';
 import { nextDocNumber } from '@shared/services/documents/docNumberService.ts';
 import { statusOptions } from '@shared/documents/docTransitions.ts';
@@ -65,6 +67,14 @@ function sobLineItemRowHTML(item: Partial<SOBLineItem> = {}) {
     </tr>`;
 }
 
+// Paid and Partially Paid are worked out from the receipts recorded against a
+// statement (collectionsCalc.ts), so they are not offered as something to set
+// by hand — only kept when a statement already carries one.
+const PAYMENT_STATUSES = ['Paid', 'Partially Paid', 'Viewed'];
+function sobStatusChoices(current: string): string[] {
+  return statusOptions('sob', current).filter(o => o === current || !PAYMENT_STATUSES.includes(o));
+}
+
 function sobFormHTML(s: Partial<SOB> = {}, items: SOBLineItem[] = []) {
   const clientOpts  = _clients.map(c => `<option value="${escapeHtml(c.name)}"/>`).join('');
   const projectOpts = `<option value="">— no project —</option>` +
@@ -74,6 +84,9 @@ function sobFormHTML(s: Partial<SOB> = {}, items: SOBLineItem[] = []) {
   const vatAmt      = items.reduce((sum, li) => sum + li.quantity * li.unit_price * li.vat_rate / 100, 0);
   const discount    = s.discount ?? 0;
   const total       = subtotal + vatAmt - discount;
+  const replacementOpts = `<option value="">— none —</option>` +
+    _sobs.filter(x => x.id !== s.id && !x.archived_at)
+      .map(x => `<option value="${x.id}"${s.superseded_by === x.id ? ' selected' : ''}>${escapeHtml(x.sob_num)} · ${escapeHtml(x.client ?? '')}</option>`).join('');
 
   return `<datalist id="sob-client-list">${clientOpts}</datalist>
   <div class="form-grid">
@@ -81,9 +94,10 @@ function sobFormHTML(s: Partial<SOB> = {}, items: SOBLineItem[] = []) {
     <div class="form-group"><div class="form-label">Client</div><input class="form-input" id="sob-client" value="${escapeHtml(s.client || '')}" list="sob-client-list" placeholder="Client name" autocomplete="off"/></div>
     <div class="form-group"><div class="form-label">Status</div>
       <select class="form-input" id="sob-status">
-        ${statusOptions('sob', s.status || 'Draft')
+        ${sobStatusChoices(s.status || 'Draft')
           .map(o => `<option${o === (s.status || 'Draft') ? ' selected' : ''}>${o}</option>`).join('')}
       </select>
+      <div style="font-size:10.5px;color:var(--ink-3);margin-top:4px">Paid / part-paid follows the payments recorded.</div>
     </div>
     <div class="form-group"><div class="form-label">Currency</div>
       <select class="form-input" id="sob-currency">
@@ -95,6 +109,8 @@ function sobFormHTML(s: Partial<SOB> = {}, items: SOBLineItem[] = []) {
     <div class="form-group"><div class="form-label">Due Date</div><input class="form-input" id="sob-due" type="date" value="${toISODate(s.due_date)}"/></div>
     <div class="form-group full"><div class="form-label">Project (optional)</div><select class="form-input" id="sob-project">${projectOpts}</select></div>
     <div class="form-group full"><div class="form-label">Description (optional)</div><textarea class="form-input" id="sob-desc" rows="2" placeholder="Brief description of services billed">${escapeHtml(s.description || '')}</textarea></div>
+    <div class="form-group"><div class="form-label">Replaced by (if superseded)</div><select class="form-input" id="sob-superseded-by">${replacementOpts}</select></div>
+    <div class="form-group"><div class="form-label">Outcome note</div><input class="form-input" id="sob-outcome-note" value="${escapeHtml(s.outcome_note || '')}" placeholder="Why it was cancelled or amended"/></div>
   </div>
 
   <div style="margin-top:18px">
@@ -140,13 +156,15 @@ export function renderSOB(sobs: SOB[]) {
   const visible = _showArchivedSOBs
     ? sobs.filter(s => s.archived_at)
     : sobs.filter(s => !s.archived_at);
-  const total    = visible.reduce((sum, s) => sum + (s.total_amount || 0), 0);
-  const converted = visible.filter(s => s.linked_invoice_id).length;
+  const today    = todayISO();
+  const rowsById = new Map(visible.map(s => [s.id, collectionFor(s, _invoices, today)]));
+  const billed    = [...rowsById.values()].reduce((sum, r) => sum + r.billed, 0);
+  const collected = [...rowsById.values()].reduce((sum, r) => sum + r.collected, 0);
   const archivedCount = sobs.filter(s => s.archived_at).length;
 
   const summaryEl = document.getElementById('sob-summary');
   if (summaryEl) {
-    summaryEl.textContent = `${visible.length} billing statement${visible.length !== 1 ? 's' : ''} · ${formatCurrency(total)} total · ${converted} converted to invoice`;
+    summaryEl.textContent = `${visible.length} billing statement${visible.length !== 1 ? 's' : ''} · ${formatCurrency(billed)} billed · ${formatCurrency(collected)} collected`;
   }
 
   const toggleBtn = document.getElementById('sob-archive-toggle');
@@ -167,19 +185,20 @@ export function renderSOB(sobs: SOB[]) {
 
   tbody.innerHTML = pageRows.map(s => {
     const isArchived  = !!s.archived_at;
-    const canConvert  = !s.linked_invoice_id && !['Paid', 'Cancelled'].includes(s.status) && !isArchived;
-    const linkedInv   = s.linked_invoice_id ? _invoices.find(i => i.id === s.linked_invoice_id) : null;
+    const row         = rowsById.get(s.id) ?? collectionFor(s, _invoices, today);
+    const receipts    = receiptsForSOB(s, _invoices);
+    const canConvert  = !receipts.length && !['Paid', 'Cancelled', 'Superseded'].includes(s.status) && !isArchived;
     const proj        = s.project_id ? _projects.find(p => p.id === s.project_id) : null;
     const primaryBtn = isArchived ? '' :
       canConvert
         ? `<button class="btn btn-ghost" style="padding:3px 8px;font-size:11px;color:var(--gold)" onclick="convertSOBToInvoice(${s.id})">→ Invoice</button>`
-        : linkedInv
-          ? `<span style="font-size:10px;color:var(--green);padding:0 2px">Invoice ${escapeHtml(linkedInv.or_num)}</span>`
+        : receipts.length
+          ? `<span style="font-size:10px;color:var(--green);padding:0 2px">${receipts.length === 1 ? escapeHtml(receipts[0].or_num) : `${receipts.length} receipts`}</span>`
           : '';
     const emailBtnVis = !isArchived
       ? `<button class="btn btn-ghost" style="padding:3px 8px;font-size:11px;color:var(--blue)" onclick="openSOBSendEmail(${s.id})">Email</button>`
       : '';
-    const recordItem = !['Paid','Cancelled'].includes(s.status) && !isArchived
+    const recordItem = row.billed > 0 && row.outstanding > 0 && !isArchived
       ? `<button onclick="openSOBRecordPayment(${s.id})">Record Payment</button>` : '';
     const moreItems = isArchived
       ? `<button onclick="printSOB(${s.id})">Download PDF</button>
@@ -201,10 +220,10 @@ export function renderSOB(sobs: SOB[]) {
       <td style="font-size:11px;color:var(--ink-3)">${escapeHtml(s.sob_num)}</td>
       <td style="font-weight:500;color:var(--ink)">${escapeHtml(s.client ?? '—')}</td>
       <td style="font-size:11px;color:var(--ink-3)">${proj ? escapeHtml(proj.name) : '—'}</td>
-      <td class="amount-cell">${formatCurrency(s.total_amount)}</td>
+      <td class="amount-cell">${formatCurrency(s.total_amount)}${row.collected > 0 && row.outstanding > 0 ? `<div style="font-size:10px;color:var(--green)">${formatCurrency(row.collected)} paid</div>` : ''}</td>
       <td style="font-size:11px;color:var(--ink-3)">${displayDate(s.issue_date)}</td>
       <td style="font-size:11px;color:var(--ink-3)">${displayDate(s.due_date)}</td>
-      <td><span class="badge badge-${statusClass(s.status)}">${escapeHtml(s.status)}</span></td>
+      <td><span class="badge badge-${collectionBadgeClass(row.status)}">${escapeHtml(row.status)}</span></td>
       <td>
         <div class="flex-gap" style="gap:4px">
           ${primaryBtn}
@@ -309,6 +328,10 @@ export async function saveSOB() {
   const sob_num = (document.getElementById('sob-num') as HTMLInputElement).value.trim();
   const err = validateRequired(sob_num, 'SOB number');
   if (err) { toast(err, 'error'); return; }
+  if (_sobs.some(x => x.sob_num === sob_num && x.id !== _editingSOBId)) {
+    toast(`${sob_num} is already used by another statement — pick another number`, 'error');
+    return;
+  }
 
   const rows = document.querySelectorAll<HTMLTableRowElement>('#sob-line-rows .sob-li-row');
   const lineItems: SOBLineItem[] = [];
@@ -366,10 +389,31 @@ export async function saveSOB() {
   if (preparedBy)  payload.prepared_by           = preparedBy;
   if (approvedBy)  payload.approved_by           = approvedBy;
 
+  // Migration 021 columns: only sent when set, or when clearing a value the
+  // statement already had, so saving still works before the migration is run.
+  const existing      = editingSOB();
+  const outcomeNote   = (document.getElementById('sob-outcome-note') as HTMLInputElement).value.trim();
+  const supersededRaw = (document.getElementById('sob-superseded-by') as HTMLSelectElement).value;
+  if (outcomeNote || existing?.outcome_note)   payload.outcome_note  = outcomeNote || null;
+  if (supersededRaw || existing?.superseded_by) payload.superseded_by = supersededRaw ? +supersededRaw : null;
+  if (payload.status === 'Superseded' && !supersededRaw && !outcomeNote) {
+    toast('Say which statement replaces this one, or add an outcome note', 'error');
+    return;
+  }
+  // A superseded statement stops counting, receipts and all — so one that has
+  // already collected money would make its payments vanish from the client's
+  // balance. Settle or cancel the remainder on this statement instead.
+  if (existing && payload.status === 'Superseded' && existing.status !== 'Superseded') {
+    const paid = collectionFor(existing, _invoices, todayISO()).collected;
+    if (paid > 0) {
+      toast(`${existing.sob_num} already has ${formatCurrency(paid)} paid against it — it cannot be superseded. Record or cancel the remaining balance on it instead.`, 'error');
+      return;
+    }
+  }
+
   const user = await getCurrentUser();
   const actor = user?.name ?? user?.email ?? null;
   let sobId = _editingSOBId;
-  let billedProject = false;
   if (sobId) {
     const ok = await updateSOB(sobId, payload);
     if (!ok) { toast('Could not update billing statement', 'error'); return; }
@@ -381,7 +425,7 @@ export async function saveSOB() {
     sobId = result.id;
     toast('Billing statement created', 'success');
     await logDocActivity('sob', sobId, sob_num, 'created', actor);
-    if (payload.project_id) billedProject = await advanceProjectOnBilling(payload.project_id);
+    if (payload.project_id) await advanceProjectOnBilling(payload.project_id);
   }
 
   if (sobId && lineItems.length) {
@@ -389,12 +433,10 @@ export async function saveSOB() {
   }
 
   closeModal();
-  // A project that just moved along the pipeline needs the whole tab redrawn,
-  // since the pipeline table lives on the Receivables overview rather than here.
-  if (billedProject) { loadFinance(); return; }
-  const fresh = await fetchSOBs();
-  setSOBs(fresh);
-  renderSOB(fresh);
+  // The whole tab is redrawn, not just this table: statements feed the
+  // Collections tab and the receivables cards, and a project that just moved
+  // along the pipeline shows on the Receivables overview.
+  await loadFinance();
 }
 
 // Billing a project is what advances it, whichever door the statement came
@@ -402,6 +444,10 @@ export async function saveSOB() {
 // Approved, so the pipeline went on offering → SOB and a duplicate statement
 // was one click away — and nothing in the project form could correct the stage,
 // which does not offer the pipeline's own statuses.
+function editingSOB(): SOB | undefined {
+  return _editingSOBId ? _sobs.find(x => x.id === _editingSOBId) : undefined;
+}
+
 async function advanceProjectOnBilling(projectId: number): Promise<boolean> {
   const proj = _projects.find(p => p.id === projectId);
   if (!shouldAdvanceOnBilling(proj)) return false;
@@ -418,9 +464,9 @@ export async function handleDeleteSOB(id: number) {
   const ok = await deleteSOB(id);
   if (!ok) { toast('Could not delete billing statement', 'error'); return; }
   toast('Billing statement deleted', '');
-  const fresh = await fetchSOBs();
-  setSOBs(fresh);
-  renderSOB(fresh);
+  // Statements feed the Collections tab and the receivables cards, not just
+  // this table — redraw the lot so the totals move with it.
+  await loadFinance();
 }
 
 export async function archiveSOB(id: number) {
@@ -430,25 +476,25 @@ export async function archiveSOB(id: number) {
   toast('Billing statement archived', '');
   const user = await getCurrentUser();
   await logDocActivity('sob', id, sob?.sob_num ?? null, 'archived', user?.name ?? user?.email ?? null);
-  const fresh = await fetchSOBs();
-  setSOBs(fresh);
-  renderSOB(fresh);
+  // Statements feed the Collections tab and the receivables cards, not just
+  // this table — redraw the lot so the totals move with it.
+  await loadFinance();
 }
 
 export async function restoreSOB(id: number) {
   const ok = await updateSOB(id, { archived_at: null } as Partial<SOB>);
   if (!ok) { toast('Could not restore billing statement', 'error'); return; }
   toast('Billing statement restored', '');
-  const fresh = await fetchSOBs();
-  setSOBs(fresh);
-  renderSOB(fresh);
+  // Statements feed the Collections tab and the receivables cards, not just
+  // this table — redraw the lot so the totals move with it.
+  await loadFinance();
 }
 
 export async function convertSOBToInvoice(id: number) {
   const sob = _sobs.find(x => x.id === id);
   if (!sob) return;
-  if (sob.linked_invoice_id) {
-    toast('This SOB is already linked to an invoice', 'error');
+  if (receiptsForSOB(sob, _invoices).length) {
+    toast('This SOB already has a receipt — use Record Payment for the next payment', 'error');
     return;
   }
   const sobItems = await fetchSOBLineItems(id);
@@ -604,50 +650,9 @@ export function openSOBSendEmail(id: number) {
   });
 }
 
-// A Statement of Billing is a request for payment, not a receipt — cash is
-// recorded against the *invoice* it converts into. This used to open its own
-// payment form that wrote the payment into the SOB's notes as free text: no
-// ledger row, no Official Receipt, and nothing on the dashboard moved.
-//
-// So this is now a router. With a linked invoice it hands off to the invoice's
-// payment flow (which posts to the ledger and prints the OR); without one it
-// says what to do first. One cash event, one ledger row — recording it in both
-// places would double-count revenue the moment the SOB was converted.
-export function openSOBRecordPayment(id: number) {
-  const s = _sobs.find(x => x.id === id);
-  if (!s) return;
-
-  if (s.linked_invoice_id) {
-    const invoice = _invoices.find(i => i.id === s.linked_invoice_id);
-    if (!invoice) { toast('The linked invoice could not be found — please refresh.', 'error'); return; }
-    if (invoice.status === 'Paid') { toast(`Invoice ${invoice.or_num} is already paid`, 'error'); return; }
-    window.openRecordPayment(invoice.id);
-    return;
-  }
-
-  openModal('Record Payment', `
-    <div style="font-size:13px;color:var(--ink-2);line-height:1.7">
-      <p style="margin-bottom:10px">
-        SOB <strong>${escapeHtml(s.sob_num)}</strong> has not been converted to an invoice yet.
-      </p>
-      <p style="margin-bottom:10px">
-        Payments are recorded against the invoice, so the amount reaches the Cash Ledger,
-        the dashboard, and the Official Receipt. Convert this SOB first, then record the
-        payment on the invoice.
-      </p>
-      <div style="padding:12px;background:var(--linen-3);border-radius:6px;font-size:12px;color:var(--ink-3)">
-        Statement of Billing → <strong>Invoice</strong> → Payment → Official Receipt
-      </div>
-    </div>`, async () => {
-    closeModal();
-    await convertSOBToInvoice(id);
-  }, 'Convert to Invoice');
-}
-
 // Extend Window to include the cross-module SOB↔Invoice bridges
 declare global {
   interface Window {
     openInvoiceFromSOB: (draft: Partial<import('@shared/types.ts').Invoice>, items: InvoiceLineItem[], sobId: number) => void;
-    openRecordPayment: (invoiceId: number) => void;
   }
 }

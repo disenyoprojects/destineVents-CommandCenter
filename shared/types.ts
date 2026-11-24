@@ -175,6 +175,10 @@ export interface Invoice {
   payment_id: string | null;
   payment_url: string | null;
   paymongo_link_id: string | null;
+  // The Statement of Billing this receipt collects against. One statement can
+  // be settled by several receipts (a downpayment, then the balance). Optional
+  // because it only exists once migration 021 has been run.
+  sob_id?: number | null;
   created_at: string;
 }
 
@@ -362,6 +366,12 @@ export interface SOB {
   approved_by: string | null;
   status: string;
   linked_invoice_id: number | null;
+  // Migration 021. superseded_by points at the statement that replaced this
+  // one; outcome_note says why it was cancelled or amended; last_followup_at is
+  // when someone last chased the client about it.
+  superseded_by?: number | null;
+  outcome_note?: string | null;
+  last_followup_at?: string | null;
   archived_at: string | null;
   created_at: string;
 }

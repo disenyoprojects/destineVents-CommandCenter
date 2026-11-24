@@ -59,7 +59,13 @@ describe('statusOptions', () => {
 
   it('lists options in lifecycle order, not map order', () => {
     expect(statusOptions('sob', 'Sent'))
-      .toEqual(['Sent', 'Viewed', 'Partially Paid', 'Paid', 'Cancelled']);
+      .toEqual(['Sent', 'Viewed', 'Partially Paid', 'Paid', 'Cancelled', 'Superseded']);
+  });
+
+  it('lets an unsettled statement be marked Superseded, but not a paid one', () => {
+    expect(canTransition('sob', 'Sent', 'Superseded')).toBe(true);
+    expect(canTransition('sob', 'Draft', 'Superseded')).toBe(true);
+    expect(canTransition('sob', 'Paid', 'Superseded')).toBe(false);
   });
 
   it('always includes the current status', () => {
