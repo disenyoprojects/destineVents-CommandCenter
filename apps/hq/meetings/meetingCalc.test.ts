@@ -89,6 +89,11 @@ describe('external participants', () => {
       { name: 'Don Santos', email: null, internal: false },
     ]);
   });
+  it('drops angle brackets from a name so it reads back the same way', () => {
+    const { participants } = parseExternalParticipants('A <b, x@y.co');
+    expect(participants[0].name).toBe('A b');
+    expect(parseExternalParticipants(formatExternalParticipants(participants)).invalid).toEqual([]);
+  });
   it('flags a line with a broken email', () => {
     expect(parseExternalParticipants('Ana <ana@client>').invalid).toEqual(['Ana <ana@client>']);
   });

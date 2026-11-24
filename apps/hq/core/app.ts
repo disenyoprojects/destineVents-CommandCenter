@@ -89,7 +89,7 @@ import { loadUsers, approveUser, changeUserRole, removeUser } from './users.ts';
 import {
   loadMeetings, showMeetingTab, setMeetingFilter, clearMeetingFilters,
   openAddMeeting, openEditMeeting, saveMeeting, handleDeleteMeeting,
-  markMeetingCompleted, markMeetingNoShow, cancelMeeting, openRescheduleMeeting,
+  markMeetingCompleted, markMeetingNoShow, cancelMeeting, openRescheduleMeeting, onMeetingTimezoneChange,
 } from '../meetings/meetings.ts';
 import {
   openAddPayroll, openEditPayroll, handleDeletePayroll,
@@ -591,7 +591,7 @@ declare global {
     openAddMeeting: typeof openAddMeeting; openEditMeeting: typeof openEditMeeting;
     saveMeeting: typeof saveMeeting; handleDeleteMeeting: typeof handleDeleteMeeting;
     markMeetingCompleted: typeof markMeetingCompleted; markMeetingNoShow: typeof markMeetingNoShow;
-    openRescheduleMeeting: typeof openRescheduleMeeting;
+    openRescheduleMeeting: typeof openRescheduleMeeting; onMeetingTimezoneChange: typeof onMeetingTimezoneChange;
     cancelMeeting: typeof cancelMeeting;
   }
 }
@@ -677,7 +677,7 @@ Object.assign(window, {
   // Meetings
   loadMeetings, showMeetingTab, setMeetingFilter, clearMeetingFilters,
   openAddMeeting, openEditMeeting, saveMeeting, handleDeleteMeeting,
-  markMeetingCompleted, markMeetingNoShow, cancelMeeting, openRescheduleMeeting,
+  markMeetingCompleted, markMeetingNoShow, cancelMeeting, openRescheduleMeeting, onMeetingTimezoneChange,
 });
 
 export { showPage };

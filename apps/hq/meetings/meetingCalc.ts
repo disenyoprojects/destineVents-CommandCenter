@@ -114,7 +114,9 @@ export function parseExternalParticipants(text: string): { participants: Meeting
       : line.includes('@') ? [line, line]
       : [line, ''];
     if (email && !EMAIL.test(email)) { invalid.push(line); continue; }
-    participants.push({ name: name || email, email: email || null, internal: false });
+    // Angle brackets are what mark the email, so they cannot stay in a name.
+    const cleanName = name.replace(/[<>]/g, '').trim();
+    participants.push({ name: cleanName || email, email: email || null, internal: false });
   }
   return { participants, invalid };
 }

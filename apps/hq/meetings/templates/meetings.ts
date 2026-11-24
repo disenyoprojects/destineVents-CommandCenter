@@ -1,7 +1,9 @@
 import type { Meeting, Client, InternUser, Proposal } from '@shared/types';
 import { escapeHtml } from '@shared/utils/helpers.ts';
 import { APP_SETTINGS } from '@config/settings.ts';
-import { meetingStats, utcToZonedWallTime, formatExternalParticipants } from '../meetingCalc.ts';
+import {
+  meetingStats, utcToZonedWallTime, formatExternalParticipants, isValidTimezone,
+} from '../meetingCalc.ts';
 
 // Stage is the CRM pipeline step (it drives the client's stage label on the
 // Clients page); type is what kind of meeting it is (§13.3). Types and
@@ -24,8 +26,10 @@ export const MEETING_STATUS_CLASS: Record<string, string> = {
 
 // A meeting's time is shown in its own timezone, named when it is not the
 // default — "Nov 25, 2026 9:00 AM (Australia/Sydney)".
+// A zone this browser cannot read falls back to the default rather than
+// breaking the page — the column is free text.
 export function meetingTz(m: Partial<Meeting>): string {
-  return m.timezone || DEFAULT_MEETING_TZ;
+  return m.timezone && isValidTimezone(m.timezone) ? m.timezone : DEFAULT_MEETING_TZ;
 }
 
 function fmtDatetime(dt: string | null, tz: string = DEFAULT_MEETING_TZ): string {
@@ -71,7 +75,9 @@ function meetLinkHTML(m: Meeting): string {
 function actionButtons(m: Meeting): string {
   const editBtn = `<button role="menuitem" onclick="openEditMeeting(${m.id})">Edit</button>`;
   const delBtn  = `<button role="menuitem" style="color:var(--red)" onclick="handleDeleteMeeting(${m.id})">Delete</button>`;
-  const logBtn  = `<button role="menuitem" onclick="openDocActivityLog('meeting',${m.id},'${escapeHtml((m.title ?? 'Meeting').replace(/'/g, ''))}')">Activity Log</button>`;
+  // JSON.stringify makes the title a safe JS string (quotes, backslashes,
+  // newlines); escapeHtml then makes that safe inside the attribute.
+  const logBtn  = `<button role="menuitem" onclick="openDocActivityLog('meeting',${m.id},${escapeHtml(JSON.stringify(m.title ?? 'Meeting'))})">Activity Log</button>`;
 
   let statusActions = '';
   if (m.status === 'Not Scheduled') {
@@ -140,18 +146,31 @@ export function meetingFormHTML(m: Partial<Meeting> = {}, opts: MeetingFormOptio
   const clientOpts = opts.clients.map(c =>
     `<option value="${c.id}"${m.client_id === c.id ? ' selected' : ''}>${escapeHtml(c.name)}</option>`
   ).join('');
-  const ownerOpts = opts.users.map(u =>
+  // A saved owner, participant or quotation that is not in today's lists (a
+  // user since removed, a list that failed to load) is still shown and kept,
+  // so an edit never wipes it without anyone noticing.
+  const userIds = new Set(opts.users.map(u => u.id));
+  const formerOwner = m.owner_id && !userIds.has(m.owner_id)
+    ? `<option value="${escapeHtml(m.owner_id)}" selected>${escapeHtml(m.owner_name ?? 'Former owner')} (no longer in HQ)</option>` : '';
+  const ownerOpts = formerOwner + opts.users.map(u =>
     `<option value="${escapeHtml(u.id)}"${m.owner_id === u.id ? ' selected' : ''}>${escapeHtml(u.name)}</option>`
   ).join('');
-  const proposalOpts = opts.proposals.map(p =>
+  const missingProposal = m.proposal_id && !opts.proposals.some(p => p.id === m.proposal_id)
+    ? `<option value="${m.proposal_id}" selected>Quotation #${m.proposal_id} (not loaded)</option>` : '';
+  const proposalOpts = missingProposal + opts.proposals.map(p =>
     `<option value="${p.id}"${m.proposal_id === p.id ? ' selected' : ''}>${escapeHtml(p.name)}${p.client ? ` — ${escapeHtml(p.client)}` : ''} (${escapeHtml(p.status)})</option>`
   ).join('');
-  const internalIds = new Set((m.participants ?? []).filter(p => p.internal).map(p => p.user_id));
-  const internalBoxes = opts.users.length
-    ? opts.users.map(u => `
+  const internal = (m.participants ?? []).filter(p => p.internal);
+  const internalIds = new Set(internal.map(p => p.user_id));
+  const box = (id: string, label: string, checked: boolean) => `
         <label style="display:inline-flex;align-items:center;gap:4px;margin:0 12px 4px 0;font-size:12px">
-          <input type="checkbox" class="mt-internal" value="${escapeHtml(u.id)}"${internalIds.has(u.id) ? ' checked' : ''}/> ${escapeHtml(u.name)}
-        </label>`).join('')
+          <input type="checkbox" class="mt-internal" value="${escapeHtml(id)}"${checked ? ' checked' : ''}/> ${label}
+        </label>`;
+  const formerBoxes = internal
+    .filter(p => p.user_id && !userIds.has(p.user_id))
+    .map(p => box(p.user_id!, `${escapeHtml(p.name)} (no longer in HQ)`, true)).join('');
+  const internalBoxes = opts.users.length || formerBoxes
+    ? formerBoxes + opts.users.map(u => box(u.id, escapeHtml(u.name), internalIds.has(u.id))).join('')
     : '<div style="font-size:11px;color:var(--ink-3)">No HQ users found.</div>';
 
   return `
@@ -189,7 +208,8 @@ export function meetingFormHTML(m: Partial<Meeting> = {}, opts: MeetingFormOptio
     </div>
     <div class="form-group">
       <div class="form-label">Timezone</div>
-      <select class="form-input" id="mt-timezone">${options(timezones, tz)}</select>
+      <select class="form-input" id="mt-timezone" data-prev="${escapeHtml(tz)}" onchange="onMeetingTimezoneChange(this)">${options(timezones, tz)}</select>
+      <div style="font-size:10.5px;color:var(--ink-3);margin-top:3px">Changing it keeps the same moment and converts the times.</div>
     </div>
     <div class="form-group">
       <div class="form-label">Location</div>

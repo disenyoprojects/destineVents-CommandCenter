@@ -18,7 +18,7 @@ import {
   clientMeetingTimelineHTML, getCrmStageLabel,
 } from './templates/meetings.ts';
 import {
-  isValidTimezone, parseExternalParticipants, upcomingMeetings, zonedWallTimeToUtc,
+  isValidTimezone, parseExternalParticipants, upcomingMeetings, utcToZonedWallTime, zonedWallTimeToUtc,
 } from './meetingCalc.ts';
 
 export { fetchMeetingsByClient, clientMeetingTimelineHTML, getCrmStageLabel };
@@ -54,15 +54,17 @@ async function logMeeting(id: number, title: string | null, action: 'created' | 
 
 export async function loadMeetings(): Promise<void> {
   try {
+    // Users and quotations are re-read every time: a list cached from earlier
+    // would miss what someone else added since, and the form needs them.
     const [meetings, clients, users, proposals] = await Promise.all([
       fetchMeetings(),
       _clients.length ? Promise.resolve(_clients) : fetchClients(),
-      _hqUsers.length ? Promise.resolve(_hqUsers) : fetchUsers(),
-      _proposals.length ? Promise.resolve(_proposals) : fetchProposals(),
+      fetchUsers(),
+      fetchProposals(),
     ]);
     setMeetings(meetings || []);
     if (!_clients.length && clients) setClients(clients);
-    if (!_proposals.length && proposals) setProposals(proposals);
+    if (proposals) setProposals(proposals);
     _hqUsers = (users || []).filter(u => HQ_ROLES.includes(u.role)).sort((a, b) => a.name.localeCompare(b.name));
     _renderActiveMeetingTab();
   } catch (error) {
@@ -150,11 +152,13 @@ function _renderMeetingList(): void {
   if (_meetingFilterType) filtered = filtered.filter(m => m.meeting_type === _meetingFilterType);
   if (_meetingFilterStage) filtered = filtered.filter(m => m.stage === _meetingFilterStage);
   if (_meetingFilterStatus) filtered = filtered.filter(m => m.status === _meetingFilterStatus);
+  // By the date the meeting falls on where it is held, not the UTC date.
+  const day = (m: Meeting) => utcToZonedWallTime(m.start_datetime, meetingTz(m)).slice(0, 10);
   if (_meetingFilterDateFrom) filtered = filtered.filter(m =>
-    m.start_datetime && m.start_datetime >= _meetingFilterDateFrom
+    m.start_datetime && day(m) >= _meetingFilterDateFrom
   );
   if (_meetingFilterDateTo) filtered = filtered.filter(m =>
-    m.start_datetime && m.start_datetime.slice(0, 10) <= _meetingFilterDateTo
+    m.start_datetime && day(m) <= _meetingFilterDateTo
   );
 
   const hasFilters = !!(
@@ -262,11 +266,22 @@ function pick<T extends string>(raw: string, allowed: readonly T[] | readonly st
   return (allowed as readonly string[]).includes(raw) ? raw as T : fallback;
 }
 
+function _editingMeeting(): Meeting | undefined {
+  return _editingMeetingId !== null ? _meetings.find(x => x.id === _editingMeetingId) : undefined;
+}
+
+// A ticked person no longer among HQ users keeps the details saved with the
+// meeting, rather than being dropped on save.
 function _readParticipants(): MeetingParticipant[] | string {
+  const saved = (_editingMeeting()?.participants ?? []).filter(p => p.internal);
   const internal = Array.from(document.querySelectorAll<HTMLInputElement>('.mt-internal:checked'))
-    .map(box => _hqUsers.find(u => u.id === box.value))
-    .filter((u): u is InternUser => !!u)
-    .map(u => ({ name: u.name, email: u.email ?? null, internal: true, user_id: u.id }));
+    .map((box): MeetingParticipant | undefined => {
+      const u = _hqUsers.find(x => x.id === box.value);
+      return u
+        ? { name: u.name, email: u.email ?? null, internal: true, user_id: u.id }
+        : saved.find(p => p.user_id === box.value);
+    })
+    .filter((p): p is MeetingParticipant => !!p);
   const { participants: external, invalid } = parseExternalParticipants(gVal('mt-external'));
   if (invalid.length) return `Check the email on: ${invalid.join('; ')}`;
   return [...internal, ...external];
@@ -275,8 +290,12 @@ function _readParticipants(): MeetingParticipant[] | string {
 function _readMeetingForm(): Partial<Meeting> | null {
   const title = gVal('mt-title').trim();
   if (!title) { toast('Give the meeting a title', 'error'); return null; }
-  const meeting_type = gVal('mt-type');
-  if (!MEETING_TYPES.includes(meeting_type)) { toast('Choose the meeting type', 'error'); return null; }
+  // Required for new meetings. One saved before types existed can still be
+  // edited or rescheduled without picking one.
+  const existing = _editingMeeting();
+  const typeRaw = gVal('mt-type');
+  const meeting_type = MEETING_TYPES.includes(typeRaw) ? typeRaw : null;
+  if (!meeting_type && (!existing || existing.meeting_type)) { toast('Choose the meeting type', 'error'); return null; }
 
   const timezone = gVal('mt-timezone') || DEFAULT_MEETING_TZ;
   if (!isValidTimezone(timezone)) { toast('Choose a valid timezone', 'error'); return null; }
@@ -299,7 +318,10 @@ function _readMeetingForm(): Partial<Meeting> | null {
   if (typeof participants === 'string') { toast(participants, 'error'); return null; }
 
   const ownerId = gVal('mt-owner');
-  const owner = _hqUsers.find(u => u.id === ownerId);
+  const hqOwner = _hqUsers.find(u => u.id === ownerId);
+  const owner = hqOwner
+    ? { id: hqOwner.id, name: hqOwner.name }
+    : ownerId && existing?.owner_id === ownerId ? { id: ownerId, name: existing.owner_name ?? null } : null;
   const clientIdRaw = gVal('mt-client');
   const proposalRaw = gVal('mt-proposal');
   const text = (id: string) => gVal(id).trim() || null;
@@ -343,7 +365,8 @@ export async function saveMeeting(): Promise<void> {
     if (_editingMeetingId !== null) {
       const ok = await updateMeeting(_editingMeetingId, payload);
       if (!ok) { toast('Could not update meeting.' + MIGRATION_HINT, 'error'); return; }
-      const moved = _reschedulingFrom !== null && _reschedulingFrom !== payload.start_datetime;
+      const moved = _reschedulingFrom !== null && payload.start_datetime != null
+        && new Date(_reschedulingFrom).getTime() !== new Date(payload.start_datetime).getTime();
       await logMeeting(_editingMeetingId, payload.title ?? null, 'updated', moved
         ? `Rescheduled from ${whenText(_reschedulingFrom, meetingTz(payload))} to ${whenText(payload.start_datetime, meetingTz(payload))}`
         : undefined);
@@ -361,6 +384,20 @@ export async function saveMeeting(): Promise<void> {
     console.error('saveMeeting failed:', error);
     toast('An unexpected error occurred', 'error');
   }
+}
+
+// Switching the timezone keeps the meeting at the same moment: the times in
+// the boxes are converted from the old zone to the new one.
+export function onMeetingTimezoneChange(select: HTMLSelectElement): void {
+  const from = select.dataset.prev || DEFAULT_MEETING_TZ;
+  const to = select.value;
+  for (const id of ['mt-start', 'mt-end']) {
+    const input = document.getElementById(id) as HTMLInputElement | null;
+    if (!input?.value) continue;
+    const instant = zonedWallTimeToUtc(input.value, from);
+    if (instant) input.value = utcToZonedWallTime(instant, to);
+  }
+  select.dataset.prev = to;
 }
 
 // ── Delete ────────────────────────────────────────────────────────────────────
