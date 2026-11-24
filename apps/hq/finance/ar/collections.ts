@@ -72,7 +72,7 @@ export function renderCollections() {
         const project = projectFor(r.sob);
         return collectionRowHTML(r, project, sobOutcome(r, project?.status ?? null));
       }).join('')
-    : `<tr><td colspan="11"><div class="empty-state">${
+    : `<tr><td colspan="10"><div class="empty-state">${
         _filter === 'attention' ? 'Nobody needs chasing today' : 'No statements in this view'
       }</div></td></tr>`;
 }

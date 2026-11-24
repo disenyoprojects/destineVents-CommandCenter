@@ -80,13 +80,20 @@ export function collectionsFilterHTML(active: CollectionsFilter, counts: Record<
       onclick="setCollectionsFilter('${f.key}')">${f.label} (${counts[f.key]})</button>`).join('');
 }
 
+// Each action sits under the figure it acts on — Record payment under what is
+// owed, Log follow-up under the step — so the table needs no actions column and
+// fits a laptop screen without scrolling sideways.
+const linkBtn = (color: string) =>
+  `background:none;border:none;padding:0;margin-top:3px;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:10.5px;font-weight:600;color:${color};text-decoration:underline;white-space:nowrap`;
+
 function followUpCell(row: SOBCollection): string {
   const f = row.followUp;
   if (!f) return '<span style="font-size:11px;color:var(--ink-3)">—</span>';
   const when  = f.due ? '<strong style="color:var(--red)">Now</strong>' : displayDate(f.date);
   const color = f.due ? 'var(--ink)' : 'var(--ink-3)';
   return `<div style="font-size:11px;color:${color}">${escapeHtml(f.action)}</div>
-    <div style="font-size:10px;color:var(--ink-3)">${when}${row.sob.last_followup_at ? ` · last chased ${displayDate(toLocalDate(row.sob.last_followup_at))}` : ''}</div>`;
+    <div style="font-size:10px;color:var(--ink-3)">${when}${row.sob.last_followup_at ? ` · last chased ${displayDate(toLocalDate(row.sob.last_followup_at))}` : ''}</div>
+    <button type="button" style="${linkBtn('var(--blue)')}" onclick="logSOBFollowUp(${row.sob.id})">Log follow-up</button>`;
 }
 
 export function collectionRowHTML(row: SOBCollection, project: Project | undefined, outcome: SOBOutcome): string {
@@ -95,28 +102,24 @@ export function collectionRowHTML(row: SOBCollection, project: Project | undefin
   const billedCell = row.status === 'Upcoming'
     ? `<span style="color:var(--ink-3)" title="Not counted until the statement is sent">${formatCurrency(sob.total_amount)}</span>`
     : formatCurrency(row.billed);
-  const actions = [
-    open && row.status !== 'Upcoming' && row.outstanding > 0
-      ? `<button class="btn btn-ghost" style="padding:3px 8px;font-size:11px;color:var(--green)" onclick="openSOBRecordPayment(${sob.id})">Record payment</button>` : '',
-    row.followUp
-      ? `<button class="btn btn-ghost" style="padding:3px 8px;font-size:11px;color:var(--blue)" onclick="logSOBFollowUp(${sob.id})">Log follow-up</button>` : '',
-  ].filter(Boolean).join('');
+  const canPay = open && row.status !== 'Upcoming' && row.outstanding > 0;
+  const payLink = canPay
+    ? `<div><button type="button" style="${linkBtn('var(--green)')}" onclick="openSOBRecordPayment(${sob.id})">Record payment</button></div>` : '';
 
   return `<tr${row.needsAttention ? ' style="background:var(--linen-2)"' : ''}>
     <td style="font-weight:500;color:var(--ink)">${escapeHtml(sob.client ?? '—')}</td>
     <td style="font-size:11px;color:var(--ink-2)">${project ? escapeHtml(project.name) : '—'}${project ? `<div style="font-size:10px;color:var(--ink-3)">${escapeHtml(project.status)}</div>` : ''}</td>
-    <td style="font-size:11px;color:var(--ink-3)">${escapeHtml(sob.sob_num)}</td>
-    <td style="font-size:11px;color:var(--ink-3)">${displayDate(sob.issue_date)}</td>
-    <td style="font-size:11px;color:var(--ink-3)">${displayDate(sob.due_date)}</td>
+    <td style="font-size:11px;color:var(--ink-3);white-space:nowrap">${escapeHtml(sob.sob_num)}</td>
+    <td style="font-size:11px;color:var(--ink-3);white-space:nowrap">${displayDate(sob.issue_date)}</td>
+    <td style="font-size:11px;color:var(--ink-3);white-space:nowrap">${displayDate(sob.due_date)}</td>
     <td class="amount-cell">${billedCell}</td>
     <td class="amount-cell" style="color:var(--green)">${row.collected ? formatCurrency(row.collected) : '—'}</td>
-    <td class="amount-cell" style="font-weight:600">${row.outstanding ? formatCurrency(row.outstanding) : '—'}</td>
+    <td class="amount-cell" style="font-weight:600">${row.outstanding ? formatCurrency(row.outstanding) : '—'}${payLink}</td>
     <td>
       <span class="badge badge-${STATUS_BADGE[row.status]}">${escapeHtml(row.status)}</span>
       <div style="font-size:10px;color:var(--ink-3);margin-top:3px" title="Outcome for reconciliation">${escapeHtml(outcome)}</div>
     </td>
-    <td>${followUpCell(row)}</td>
-    <td><div class="flex-gap" style="gap:4px">${actions}</div></td>
+    <td style="min-width:120px">${followUpCell(row)}</td>
   </tr>`;
 }
 
